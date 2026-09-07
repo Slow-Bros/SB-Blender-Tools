@@ -1,0 +1,64 @@
+# =============================================================================
+# SBTools
+# =============================================================================
+
+# System files
+.DS_Store
+*.DS_Store
+Thumbs.db
+
+# IDE / editors
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+
+# Claude Code
+.claude/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# =============================================================================
+# Blender
+# =============================================================================
+# Backup and autosave files
+*.blend1
+*.blend2
+*.blend@
+*.blend_autosave
+# Packaged add-ons / extensions (built via scripts, not checked in)
+dist/
+build/
+*.zip
+# Blender extension build cache
+.blender_ext/
+
+# =============================================================================
+# Node.js (if a tool ships a JS side)
+# =============================================================================
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# =============================================================================
+# Scratch / local test data
+# =============================================================================
+scans/
+test_output/
+tmp/
