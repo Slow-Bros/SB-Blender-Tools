@@ -38,7 +38,6 @@ module, exactly as `scripts/test_ai_retopo_headless.py` does, or symlink
 | Target Polygons | A face count for models that accept one, otherwise Low / Medium / High. The panel shows the selected model's allowed range. |
 | Polygons | Quads / Triangles, mapped to whatever the selected model calls it. |
 | Remove Stray Fragments | Delete separate parts the model placed outside the object. On by default. See *Stray fragments* below. |
-| Fit to Original | Force the result onto the original's bounding box. Off by default. See *Placement* below. |
 | Hide Original | Hide (not delete) the source object after a successful import. |
 | Pre-Decimation | Decimate the upload copy before sending (API limit 200 MB). The original is untouched. |
 
