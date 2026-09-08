@@ -358,8 +358,21 @@ def _import_file(context, path):
         result = bpy.ops.wm.obj_import(filepath=path, forward_axis="NEGATIVE_Z", up_axis="Y")
     elif ext in (".glb", ".gltf"):
         result = bpy.ops.import_scene.gltf(filepath=path)
+    elif ext == ".fbx":
+        # Tripo liefert Quad-Ergebnisse als FBX. Der Importer bringt seine
+        # eigene Achsen- und Massstabsumrechnung mit; was daneben liegt, faengt
+        # die Bounding-Box-Pruefung ab.
+        if not hasattr(bpy.ops.import_scene, "fbx"):
+            raise MeshIOError(
+                "The result is an FBX file, but the FBX importer is not enabled. "
+                "Enable 'Import-Export: FBX format' in the Blender preferences."
+            )
+        result = bpy.ops.import_scene.fbx(filepath=path)
     else:
-        raise MeshIOError(f"Unknown result format: {ext}")
+        raise MeshIOError(
+            f"Unknown result format '{ext}'. The model returned a file this "
+            "add-on cannot read; the system console shows what was received."
+        )
     if "FINISHED" not in result:
         raise MeshIOError(f"Import failed: {result}")
     return [o for o in bpy.data.objects if o not in before]

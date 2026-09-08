@@ -35,6 +35,14 @@ assert levels == ["low", "medium", "high"], levels
 assert scene.sb_ai_retopo.face_level == "medium"
 poly = [i.identifier for i in scene.sb_ai_retopo.bl_rna.properties["polygon_type"].enum_items]
 from sb_ai_retopo import models, scenario_client as _sc  # noqa: E402
+
+# A user copy in the Blender config folder takes precedence over the bundled
+# registry. This machine may have one, so force the bundled file to keep the
+# test deterministic; the precedence itself is tested explicitly further down.
+_real_user_file_path = models.user_file_path
+models.user_file_path = lambda: ""
+models.load()
+assert models.LOADED_FROM == models.BUNDLED_FILE, models.LOADED_FROM
 assert poly == [models.QUADS, models.TRIS], poly
 # The level values must be exactly what the level-based API expects
 assert set(levels) == set(_sc.FACE_LEVELS), (levels, _sc.FACE_LEVELS)
@@ -80,8 +88,9 @@ try:
 except ValueError:
     pass
 assert models.get("does-not-exist")["key"] == models.default_key()
-assert models.LOADED_FROM.endswith("models.json"), models.LOADED_FROM
+assert models.LOADED_FROM == models.BUNDLED_FILE, models.LOADED_FROM
 assert not models.LOAD_ERROR, models.LOAD_ERROR
+assert "model_meshy-remesh" not in models.known_ids(), "Meshy was removed from the registry"
 print(f"[TEST] model registry ok from {models.LOADED_FROM}: {[m['id'] for m in models.MODELS]}")
 
 # --- registry is data: a JSON file drives it, and a broken file cannot brick it
@@ -350,6 +359,40 @@ bpy.data.objects.remove(fixed, do_unlink=True)
 bpy.data.objects.remove(src2, do_unlink=True)
 bpy.data.objects.remove(sphere, do_unlink=True)
 
+# --- FBX result path: Tripo returns quad results as FBX, which used to be
+# rejected as an unknown ".bin" format
+bpy.ops.mesh.primitive_uv_sphere_add(segments=24, ring_count=12)
+fbx_source = ctx.active_object
+bpy.ops.object.select_all(action="DESELECT")
+fbx_source.select_set(True)
+ctx.view_layer.objects.active = fbx_source
+fbx_path = os.path.join(tmp, "retopo_result.fbx")
+bpy.ops.export_scene.fbx(filepath=fbx_path, use_selection=True)
+bpy.data.objects.remove(fbx_source, do_unlink=True)
+
+with open(fbx_path, "rb") as f:
+    assert scenario_client.detect_extension(f.read(256)) == ".fbx", "real FBX not detected"
+
+bpy.ops.mesh.primitive_uv_sphere_add(segments=24, ring_count=12)
+fbx_target = ctx.active_object
+fbx_target.name = "FbxBall"
+fbx_target.location = Vector((6.0, -3.0, 0.5))
+fbx_target.rotation_euler = Euler((0.9, 0.1, 0.4))
+fbx_target.scale = Vector((1.5, 1.5, 1.5))
+ctx.view_layer.update()
+
+fbx_obj, fbx_stats = mesh_io.import_result(ctx, fbx_path, fbx_target, name="FbxBall_retopo")
+ctx.view_layer.update()
+assert fbx_obj.name == "FbxBall_retopo", fbx_obj.name
+assert fbx_stats["faces"] > 100, fbx_stats
+t_lo, t_hi = world_bbox(fbx_target)
+r_lo, r_hi = world_bbox(fbx_obj)
+fbx_err = max((t_lo - r_lo).length, (t_hi - r_hi).length)
+assert fbx_err < 1e-3, f"FBX placement mismatch: {fbx_err}"
+print(f"[TEST] FBX result imported and placed ok: {fbx_stats['faces']} faces, error {fbx_err:.2e}")
+bpy.data.objects.remove(fbx_obj, do_unlink=True)
+bpy.data.objects.remove(fbx_target, do_unlink=True)
+
 # Pure-python API parsers
 assert scenario_client.extract_job_id({"job": {"jobId": "j1"}}) == "j1"
 assert scenario_client.extract_job_id({"id": "j2"}) == "j2"
@@ -357,6 +400,20 @@ assert scenario_client.extract_asset_ids({"job": {"metadata": {"assetIds": ["a",
 assert scenario_client.extract_asset_ids({"job": {"result": {"assetId": "x"}}}) == ["x"]
 assert scenario_client.detect_extension(b"# Blender\nv 1 2 3\n") == ".obj"
 assert scenario_client.detect_extension(b"glTF\x02\x00\x00\x00") == ".glb"
+# Tripo returns quad results as FBX; before, this fell through as ".bin"
+assert scenario_client.detect_extension(b"Kaydara FBX Binary  \x00\x1a\x00") == ".fbx"
+assert scenario_client.detect_extension(b"; FBX 7.4.0 project file\n") == ".fbx"
+assert scenario_client.detect_extension(b"\x00\x01\x02\x03nonsense") == ".bin"
+described = scenario_client.describe_bytes(b"\x00\x01ABC", "application/octet-stream")
+assert "application/octet-stream" in described and "0001414243" in described, described
+assert scenario_client.MIME_TO_EXT["model/fbx"] == ".fbx"
+# an octet-stream mime must not win over the magic bytes
+assert scenario_client.MIME_TO_EXT["application/octet-stream"] is None
+fbx_pick = scenario_client.pick_mesh_asset([
+    ("x", {"mimeType": "image/png", "url": "u0", "kind": "image"}),
+    ("f", {"mimeType": "model/fbx", "url": "u1", "kind": "3d"}),
+])
+assert fbx_pick[0] == "f", fbx_pick
 picked = scenario_client.pick_mesh_asset([
     ("g", {"mimeType": "model/gltf-binary", "url": "u1", "kind": "3d"}),
     ("o", {"mimeType": "model/obj", "url": "u2", "kind": "3d"}),
@@ -421,6 +478,34 @@ before_reload = [m["key"] for m in models.MODELS]
 models.load()
 assert [m["key"] for m in models.MODELS] == before_reload
 print("[TEST] registry export + reload ok")
+
+# --- a user copy shadows the bundled registry, and can be reset again
+shadow = os.path.join(reg_tmp, "shadow.json")
+with open(shadow, "w", encoding="utf-8") as f:
+    _json.dump({"models": [{
+        "key": "only_one", "id": "model_only-one", "label": "Only One",
+        "density": "level", "file_param": "file3d", "polygon_param": "polygonType",
+        "polygon_values": {"quads": "quadrilateral", "tris": "triangle"},
+    }]}, f)
+models.user_file_path = lambda: shadow
+models.load()
+assert [m["key"] for m in models.MODELS] == ["only_one"], models.MODELS
+assert models.LOADED_FROM == shadow, models.LOADED_FROM
+backup = models.reset_user_file()
+assert backup and os.path.exists(backup) and not os.path.exists(shadow)
+models.load()
+assert models.LOADED_FROM == models.BUNDLED_FILE, models.LOADED_FROM
+assert models.reset_user_file() is None, "resetting twice must be a no-op"
+# a broken user copy must fall back instead of breaking the add-on
+with open(shadow, "w", encoding="utf-8") as f:
+    f.write("{ not json")
+models.load()
+assert models.LOADED_FROM == models.BUNDLED_FILE, models.LOADED_FROM
+assert models.LOAD_ERROR, "a broken user copy must be reported"
+os.remove(shadow)
+models.user_file_path = _real_user_file_path
+models.load()
+print("[TEST] user copy precedence + reset ok")
 
 addon_utils.disable("sb_ai_retopo", default_set=True)
 assert "sb_ai_retopo" not in bpy.types.Scene.bl_rna.properties

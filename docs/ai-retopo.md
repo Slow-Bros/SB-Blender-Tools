@@ -49,35 +49,35 @@ with the same parent and world matrix, smooth shaded, selected and active.
 
 ## Models
 
-Three Scenario models take an existing mesh and retopologize it. They differ in
-how the polygon density is controlled, which is why the panel changes with the
-selected model.
+Two Scenario models are in the registry. They differ in how the polygon density
+is controlled, which is why the panel changes with the selected model.
 
-| Model | Model id | Density control | Topology |
-| --- | --- | --- | --- |
-| Hunyuan PolyGen 1.5 | `model_tencent-smarttopology` | `faceLevel`: low / medium / high only | `polygonType`: `quadrilateral` / `triangle` |
-| Meshy Remesh | `model_meshy-remesh` | `targetPolycount`: 100 to 300000 | `topology`: `quad` / `triangle` |
-| Tripo Retopology | `model_tripo-retopology` | `faceLimit`: 1000 to 20000 | `quad`: boolean |
+| Model | Model id | Density control | Topology | Result format |
+| --- | --- | --- | --- | --- |
+| Hunyuan PolyGen 1.5 | `model_tencent-smarttopology` | `faceLevel`: low / medium / high only | `polygonType`: `quadrilateral` / `triangle` | OBJ |
+| Tripo Retopology | `model_tripo-retopology` | `faceLimit`: 1000 to 20000 | `quad`: boolean | FBX |
 
-A target face count is approximate for every model. It is what the model aims
-for, not a guarantee, so the result can land somewhat above or below. Values
-outside the selected model's range are clamped to the range and the panel says
-so, rather than sending a value the API would reject.
+A target face count is approximate. It is what the model aims for, not a
+guarantee, so the result can land somewhat above or below. Values outside the
+model's range are clamped and the panel says so, rather than sending a value the
+API would reject.
 
 Hunyuan PolyGen has no numeric control at all. Its three levels are the same
 options as the *Detail* dropdown in Phototron, and the resulting face count
-depends on the level and on the input mesh. Pick one of the other two models
-when a specific number matters.
+depends on the level and on the input mesh. Pick Tripo when a specific number
+matters. Tripo is called with `bake: false` because the upload carries no
+textures, so baking would have nothing to project.
 
-Two model-specific choices are worth knowing. Meshy Remesh is called with
-`resizeHeight: 0` and `originAt: "empty"` so it leaves size and origin of the
-input alone, which keeps the placement simple. Tripo Retopology is called with
-`bake: false` because the upload carries no textures, so baking would have
-nothing to project.
+Tripo returns its result as FBX rather than OBJ or GLB. The download recognises
+that from the file's magic bytes even when the MIME type is uninformative, and
+the import goes through Blender's FBX importer. An unrecognised format is logged
+with its MIME type, size and first bytes, so a new output format can be
+identified instead of failing as an opaque unknown file.
 
-Only the Hunyuan path has run against the live API so far. The other two are
-implemented from the documented schemas and need one real run each to confirm
-their request and response shapes.
+**Meshy Remesh (`model_meshy-remesh`) was removed** from the registry. It needs a
+Meshy plan that the account does not have, so every call is rejected. Its
+verified parameters are kept in the comment block at the top of `models.json`
+and can be pasted back if a plan is added later.
 
 ## Keeping up with the API
 
@@ -96,6 +96,11 @@ folder as `sb_ai_retopo_models.json`, and that copy takes precedence over the
 bundled file from then on. A malformed file never blocks the add-on: it falls
 back to the bundled file, then to a single built-in entry, and reports the
 problem in the preferences.
+
+That precedence has a sharp edge worth knowing: once a user copy exists, a model
+list shipped with a newer version of the add-on is ignored. The preferences say
+which file is in use and offer *Reset to Bundled*, which renames the user copy
+to `.bak` rather than deleting it, so hand-made edits are recoverable.
 
 **The catalogue can be checked against the API.** *Refresh Catalogue* fetches
 `GET /v1/models`, caches the result in the preferences and compares it with the

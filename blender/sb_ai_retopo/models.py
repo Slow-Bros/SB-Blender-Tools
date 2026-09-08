@@ -141,6 +141,29 @@ def save_user_file(path=None):
     return path
 
 
+def user_file_in_use():
+    """True, wenn gerade die Benutzerkopie und nicht die mitgelieferte Datei gilt."""
+    path = user_file_path()
+    return bool(path) and LOADED_FROM == path
+
+
+def reset_user_file():
+    """Benennt die Benutzerkopie um, damit wieder die mitgelieferte Datei gilt.
+
+    Bewusst kein Loeschen: die Datei kann von Hand bearbeitet worden sein.
+
+    Returns: Pfad der Sicherung, oder None wenn es keine Benutzerkopie gab.
+    """
+    path = user_file_path()
+    if not path or not os.path.exists(path):
+        return None
+    backup = path + ".bak"
+    if os.path.exists(backup):
+        os.remove(backup)
+    os.replace(path, backup)
+    return backup
+
+
 load()
 
 

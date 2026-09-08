@@ -33,7 +33,13 @@ MIME_TO_EXT = {
     "model/obj": ".obj",
     "model/gltf-binary": ".glb",
     "model/gltf+json": ".gltf",
+    "model/fbx": ".fbx",
+    "application/octet-stream": None,  # nichtssagend, dann entscheiden die Magic Bytes
 }
+
+# Reihenfolge der Bevorzugung beim Herunterladen: OBJ behaelt Quads, GLB
+# trianguliert, FBX liefert Tripo fuer Quad-Ausgaben.
+PREFERRED_MIMES = ("model/obj", "model/gltf-binary", "model/fbx")
 
 
 class ScenarioError(Exception):
@@ -263,6 +269,12 @@ class ScenarioClient:
         self._log(f"Downloading asset {aid} ({mime or 'unknown'})")
         data = self._download(asset["url"])
         ext = MIME_TO_EXT.get(mime) or detect_extension(data)
+        if ext == ".bin":
+            # Kein bekanntes Format: die Bytes beschreiben, damit ein neues
+            # Ausgabeformat nachvollziehbar ist statt nur '.bin unbekannt'
+            self._log(f"Unrecognised result format: {describe_bytes(data, mime)}")
+        else:
+            self._log(f"Result format: {ext}")
         return data, ext
 
 
@@ -332,14 +344,18 @@ def extract_asset_ids(job_result):
 
 
 def pick_mesh_asset(infos):
-    """Waehlt aus [(id, asset)] das 3D-Asset: OBJ vor GLB vor beliebigem kind=3d."""
+    """Waehlt aus [(id, asset)] das 3D-Asset nach PREFERRED_MIMES, sonst kind=3d."""
     def by_mime(mime):
         for aid, asset in infos:
             if (asset.get("mimeType") or asset.get("contentType") or "") == mime and asset.get("url"):
                 return aid, asset
         return None
 
-    chosen = by_mime("model/obj") or by_mime("model/gltf-binary")
+    chosen = None
+    for mime in PREFERRED_MIMES:
+        chosen = by_mime(mime)
+        if chosen is not None:
+            break
     if chosen is None:
         for aid, asset in infos:
             if asset.get("kind") == "3d" and asset.get("url"):
@@ -348,10 +364,30 @@ def pick_mesh_asset(infos):
 
 
 def detect_extension(data):
-    if len(data) >= 4 and data[:4] == b"glTF":
+    """Ermittelt das Format an den Magic Bytes, wenn der MIME-Typ nichts sagt."""
+    if data[:4] == b"glTF":
         return ".glb"
+    # Tripo liefert Quad-Ergebnisse als FBX
+    if data[:18] == b"Kaydara FBX Binary":
+        return ".fbx"
+    if data[:3] == b"ply":
+        return ".ply"
     head = data[:200].lstrip().decode("utf-8", errors="replace")
-    for prefix in ("#", "v ", "vt ", "vn ", "f ", "o ", "g ", "s ", "usemtl ", "mtllib "):
+    if head.startswith("; FBX"):
+        return ".fbx"
+    for prefix in ("v ", "vt ", "vn ", "f ", "o ", "g ", "s ", "usemtl ", "mtllib "):
         if head.startswith(prefix):
             return ".obj"
+    if head.startswith("#"):
+        # OBJ-Kommentar, aber nur wenn irgendwo echte OBJ-Daten folgen
+        sample = data[:4096].decode("utf-8", errors="replace")
+        if any(f"\n{p}" in sample for p in ("v ", "f ", "vn ", "vt ")):
+            return ".obj"
     return ".bin"
+
+
+def describe_bytes(data, mime=""):
+    """Kurzbeschreibung fuer Fehlermeldungen bei unbekanntem Format."""
+    head = bytes(data[:16])
+    printable = "".join(chr(b) if 32 <= b < 127 else "." for b in head)
+    return f"mime={mime or 'unknown'}, {len(data)} bytes, starts with {head.hex()} '{printable}'"

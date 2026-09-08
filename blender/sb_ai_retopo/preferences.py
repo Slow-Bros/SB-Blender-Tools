@@ -75,9 +75,16 @@ class SBAIRetopoPreferences(bpy.types.AddonPreferences):
             sub.alert = True
             sub.label(text=f"Registry problem: {models.LOAD_ERROR}", icon="ERROR")
 
+        if models.user_file_in_use():
+            sub = box.box()
+            sub.label(text="An edited user copy is in use, not the bundled list.", icon="INFO")
+            sub.label(text="Models added with the add-on will not show up until it is reset.",
+                      icon="BLANK1")
+            sub.operator("sb.ai_retopo_reset_registry", icon="LOOP_BACK")
+
         row = box.row(align=True)
         row.operator("sb.ai_retopo_refresh_models", icon="FILE_REFRESH")
-        row.operator("sb.ai_retopo_reload_registry", icon="LOOP_BACK")
+        row.operator("sb.ai_retopo_reload_registry", icon="FILE_REFRESH")
         row.operator("sb.ai_retopo_export_registry", icon="EXPORT")
 
         catalogue = self.catalogue()

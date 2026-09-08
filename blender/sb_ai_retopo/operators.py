@@ -412,6 +412,33 @@ class SB_OT_export_registry(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class SB_OT_reset_registry(bpy.types.Operator):
+    bl_idname = "sb.ai_retopo_reset_registry"
+    bl_label = "Reset to Bundled"
+    bl_description = (
+        "Set the edited user copy of the model registry aside so the list "
+        "shipped with the add-on applies again. The copy is renamed, not deleted"
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return models.user_file_in_use()
+
+    def execute(self, context):
+        try:
+            backup = models.reset_user_file()
+        except OSError as e:
+            self.report({"ERROR"}, f"Could not move the user copy aside: {e}")
+            return {"CANCELLED"}
+        models.load()
+        _redraw_all()
+        if backup:
+            self.report({"INFO"}, f"User copy renamed to {os.path.basename(backup)}")
+        else:
+            self.report({"INFO"}, "There was no user copy")
+        return {"FINISHED"}
+
+
 def _redraw_all():
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
@@ -434,6 +461,7 @@ classes = (
     SB_OT_refresh_models,
     SB_OT_reload_registry,
     SB_OT_export_registry,
+    SB_OT_reset_registry,
 )
 
 
