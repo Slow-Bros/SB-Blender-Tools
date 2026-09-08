@@ -1,8 +1,8 @@
 schema_version = "1.0.0"
 
-id = "sb_ai_retopo"
+id = "ai_retopo"
 version = "0.1.0"
-name = "SB AI Retopo"
+name = "AI Retopo"
 tagline = "AI retopology via Scenario API, placed on the original object"
 maintainer = "Slow Bros. <amalia@slow-bros.com>"
 type = "add-on"

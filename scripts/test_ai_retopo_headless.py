@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Headless smoke test for the sb_ai_retopo add-on (no network access).
+"""Headless smoke test for the ai_retopo add-on (no network access).
 
 Run:  blender -b --python scripts/test_ai_retopo_headless.py
 
@@ -22,9 +22,9 @@ sys.path.insert(0, os.path.join(ROOT, "blender"))
 import addon_utils  # noqa: E402
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
-mod = addon_utils.enable("sb_ai_retopo", default_set=True, persistent=False)
+mod = addon_utils.enable("ai_retopo", default_set=True, persistent=False)
 assert mod is not None, "add-on failed to enable"
-from sb_ai_retopo import mesh_io, scenario_client, preferences  # noqa: E402
+from ai_retopo import mesh_io, scenario_client, preferences  # noqa: E402
 
 ctx = bpy.context
 scene = ctx.scene
@@ -34,7 +34,7 @@ levels = [i.identifier for i in scene.sb_ai_retopo.bl_rna.properties["face_level
 assert levels == ["low", "medium", "high"], levels
 assert scene.sb_ai_retopo.face_level == "medium"
 poly = [i.identifier for i in scene.sb_ai_retopo.bl_rna.properties["polygon_type"].enum_items]
-from sb_ai_retopo import models, scenario_client as _sc  # noqa: E402
+from ai_retopo import models, scenario_client as _sc  # noqa: E402
 
 assert poly == [models.QUADS, models.TRIS], poly
 # The level values must be exactly what the level-based API expects
@@ -507,6 +507,6 @@ except RuntimeError as e:
 assert res == {"CANCELLED"}, res
 assert not scene.sb_ai_retopo.running
 print("[TEST] operator credential guard ok")
-addon_utils.disable("sb_ai_retopo", default_set=True)
+addon_utils.disable("ai_retopo", default_set=True)
 assert "sb_ai_retopo" not in bpy.types.Scene.bl_rna.properties
 print("[TEST] ALL OK")

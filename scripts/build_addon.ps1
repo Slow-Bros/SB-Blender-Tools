@@ -1,5 +1,5 @@
 # Builds a Blender extension zip for one add-on in blender/<name> into dist/.
-# Usage: .\scripts\build_addon.ps1 sb_ai_retopo [-Blender "C:\path\to\blender.exe"]
+# Usage: .\scripts\build_addon.ps1 ai_retopo [-Blender "C:\path\to\blender.exe"]
 param(
     [Parameter(Mandatory = $true)][string]$Name,
     [string]$Blender = ""

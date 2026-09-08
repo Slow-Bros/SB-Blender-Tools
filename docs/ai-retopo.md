@@ -1,4 +1,4 @@
-# SB AI Retopo (Blender add-on)
+# AI Retopo (Blender add-on)
 
 Blender port of the AI retopology step from the Phototron desktop app
 (`apps/desktop/public/ipc/retopology.js`). The active mesh is sent to the
@@ -6,19 +6,19 @@ Scenario API (Tencent Hunyuan PolyGen 1.5, model `model_tencent-smarttopology`),
 retopologized, and imported back as a **new object at the position of the
 original**. The original object is never modified.
 
-Location: `blender/sb_ai_retopo/` — Blender 4.2+ extension (`blender_manifest.toml`),
+Location: `blender/ai_retopo/` — Blender 4.2+ extension (`blender_manifest.toml`),
 developed and tested against Blender 5.2.
 
 ## Install
 
-1. Build the zip (or zip the `sb_ai_retopo` folder manually):
+1. Build the zip (or zip the `ai_retopo` folder manually):
 
    ```powershell
-   & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --command extension build --source-dir blender\sb_ai_retopo --output-dir dist
+   & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --command extension build --source-dir blender\ai_retopo --output-dir dist
    ```
 
 2. Blender → Edit → Preferences → Get Extensions → dropdown (top right) →
-   *Install from Disk…* → pick `dist/sb_ai_retopo-<version>.zip`.
+   *Install from Disk…* → pick `dist/ai_retopo-<version>.zip`.
 3. In the add-on preferences enter the Scenario **API Key** and **API Secret**
    (same credentials as in Phototron → Settings). Alternatively set the
    environment variables `SCENARIO_API_KEY` / `SCENARIO_API_SECRET` before
@@ -26,7 +26,7 @@ developed and tested against Blender 5.2.
 
 For development without packaging: add `blender/` to `sys.path` and enable the
 module, exactly as `scripts/test_ai_retopo_headless.py` does, or symlink
-`blender/sb_ai_retopo` into an extension repository directory.
+`blender/ai_retopo` into an extension repository directory.
 
 ## Usage
 
@@ -84,7 +84,7 @@ says why.
 
 ## Changing the model list
 
-`blender/sb_ai_retopo/models.json` holds the table above: endpoint id, parameter
+`blender/ai_retopo/models.json` holds the table above: endpoint id, parameter
 names, ranges and the values each model uses for quads and triangles. Adding a
 model, correcting a range or dropping one that is gone means editing that file
 and restarting Blender, not editing Python.

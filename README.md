@@ -9,7 +9,7 @@ The first goal is to make the AI retopology tooling from the Phototron pipeline 
 ```
 SBTools/
 ├── blender/            # Blender add-ons / extensions, one folder per add-on
-│   └── sb_ai_retopo/   # AI retopology via Scenario API (see docs/ai-retopo.md)
+│   └── ai_retopo/      # AI Retopo — retopology via Scenario API (docs/ai-retopo.md)
 ├── scripts/            # Standalone helper scripts (build, packaging, batch jobs)
 │   ├── build_addon.ps1             # Build an extension zip into dist/
 │   └── test_ai_retopo_headless.py  # Headless smoke test (blender -b --python ...)
@@ -18,7 +18,7 @@ SBTools/
 
 ## Add-ons
 
-- **SB AI Retopo** (`blender/sb_ai_retopo`) — sends the active mesh to the
+- **AI Retopo** (`blender/ai_retopo`) — sends the active mesh to the
   Scenario API (Hunyuan PolyGen 1.5), imports the retopologized result as a new
   object at the original's position. Sidebar tab *SBTools* in the 3D viewport.
   Setup and details: [docs/ai-retopo.md](docs/ai-retopo.md).

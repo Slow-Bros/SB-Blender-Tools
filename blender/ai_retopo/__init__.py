@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""SB AI Retopo — KI-Retopologie über die Scenario API (Hunyuan PolyGen 1.5).
+"""AI Retopo — KI-Retopologie über die Scenario API (Hunyuan PolyGen 1.5).
 
 Port des Retopology-Tools aus der Phototron Desktop-App als Blender-Add-on.
 Das gewählte Mesh wird im Object Mode hochgeladen, retopologisiert und als
