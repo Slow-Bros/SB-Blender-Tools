@@ -43,9 +43,8 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
 
         spec = models.get(settings.model)
         prefs = preferences.get_prefs(context)
-        available = prefs.available_ids()
-        if available and spec["id"] not in available:
-            col.label(text="Not offered by the API any more", icon="ERROR")
+        if prefs.probe_status(spec["id"]) == "missing":
+            col.label(text="This model does not exist for your account", icon="ERROR")
 
         col.separator()
         col.label(text="Target Polygons")

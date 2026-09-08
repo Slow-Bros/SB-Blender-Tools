@@ -123,12 +123,13 @@ class SB_OT_ai_retopo(bpy.types.Operator):
         source = context.active_object
         spec = models.get(settings.model)
 
-        # Falls der Katalog bekannt ist: nicht erst nach dem Upload scheitern
-        available = prefs.available_ids()
-        if available and spec["id"] not in available:
+        # Nur bei einer eindeutigen Absage blockieren. Der Katalog unter
+        # /v1/models fuehrt die Plattform-Modelle nicht, deshalb zaehlt hier
+        # allein die gezielte Abfrage, und "unbekannt" haelt niemanden auf.
+        if prefs.probe_status(spec["id"]) == "missing":
             msg = (
-                f"'{spec['label']}' ({spec['id']}) is not offered by the API any more. "
-                "Pick another model, or refresh the catalogue in the add-on preferences."
+                f"'{spec['label']}' ({spec['id']}) does not exist for this account. "
+                "Pick another model, or check the id again in the add-on preferences."
             )
             settings.last_error = msg
             self.report({"ERROR"}, msg)
@@ -404,6 +405,76 @@ class SB_OT_refresh_models(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def _run_in_thread(work, done):
+    """Fuehrt work() im Thread aus und ruft done(result) im Hauptthread auf.
+
+    Netzwerkaufrufe duerfen den Hauptthread nicht blockieren, und ein Panel
+    darf sie nicht ausloesen. Ein Timer holt das Ergebnis ab.
+    """
+    result = {}
+
+    def run():
+        try:
+            result["value"] = work()
+        except ScenarioError as e:
+            result["error"] = str(e)
+        except Exception as e:  # noqa: BLE001
+            _log(traceback.format_exc())
+            result["error"] = f"{type(e).__name__}: {e}"
+
+    thread = threading.Thread(target=run, daemon=True, name="sb_ai_retopo_net")
+    thread.start()
+
+    def collect():
+        if thread.is_alive():
+            return 0.2
+        done(result)
+        _redraw_all()
+        return None
+
+    bpy.app.timers.register(collect, first_interval=0.2)
+    return thread
+
+
+class SB_OT_probe_model(bpy.types.Operator):
+    bl_idname = "sb.ai_retopo_probe_model"
+    bl_label = "Check"
+    bl_description = (
+        "Ask the API directly whether this model id exists for your account. "
+        "More reliable than the catalogue, which does not list platform models"
+    )
+
+    def execute(self, context):
+        api_key, api_secret = preferences.get_credentials(context)
+        if not api_key or not api_secret:
+            self.report({"ERROR"}, "Scenario API key and secret are missing (add-on preferences).")
+            return {"CANCELLED"}
+
+        prefs = preferences.get_prefs(context)
+        wanted = [spec["id"] for spec in models.MODELS]
+        extra = prefs.probe_id.strip()
+        if extra and extra not in wanted:
+            wanted.append(extra)
+
+        def work():
+            client = ScenarioClient(api_key, api_secret, log=_log)
+            return {model_id: client.probe_model(model_id) for model_id in wanted}
+
+        def done(result):
+            if "error" in result:
+                preferences.get_prefs().catalogue_error = result["error"]
+                _log(f"Model check failed: {result['error']}")
+                return
+            found = result["value"]
+            preferences.get_prefs().set_probes(found)
+            for model_id, (status, note) in found.items():
+                _log(f"Model {model_id}: {status} ({note})")
+
+        _run_in_thread(work, done)
+        self.report({"INFO"}, f"Checking {len(wanted)} model id(s) ...")
+        return {"FINISHED"}
+
+
 class SB_OT_reload_registry(bpy.types.Operator):
     bl_idname = "sb.ai_retopo_reload_registry"
     bl_label = "Reload Registry"
@@ -489,6 +560,7 @@ classes = (
     SB_OT_reload_registry,
     SB_OT_export_registry,
     SB_OT_reset_registry,
+    SB_OT_probe_model,
 )
 
 

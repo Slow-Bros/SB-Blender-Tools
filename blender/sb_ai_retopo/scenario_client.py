@@ -198,7 +198,7 @@ class ScenarioClient:
                 path += f"?paginationToken={urllib.parse.quote(str(cursor))}"
             res = self._request("GET", path)
             page = extract_models(res)
-            if not page and not found:
+            if not page and not found and not _has_model_list(res):
                 self._log(f"Unexpected /v1/models response: {json.dumps(res)[:300]}")
             for model_id, name in page:
                 if model_id not in seen:
@@ -209,6 +209,30 @@ class ScenarioClient:
                 break
         self._log(f"Model catalogue: {len(found)} entries")
         return found
+
+    def probe_model(self, model_id):
+        """Fragt ein einzelnes Modell ueber GET /v1/models/{id} ab.
+
+        Die Liste unter /v1/models enthaelt die Plattform-Modelle nicht, sie
+        antwortet fuer Accounts ohne eigene Modelle mit einer leeren Liste.
+        Eine gezielte Abfrage ist deshalb die verlaesslichere Auskunft.
+
+        Returns: ("available" | "missing" | "unknown", Erlaeuterung)
+        """
+        try:
+            res = self._request("GET", f"/v1/models/{urllib.parse.quote(model_id)}")
+        except Cancelled:
+            raise
+        except ScenarioError as e:
+            message = str(e)
+            if " 404" in message:
+                return "missing", "not found for this account"
+            if " 401" in message or " 403" in message:
+                return "unknown", "no permission to query this model"
+            return "unknown", message
+        if isinstance(res, dict) and (res.get("model") or res.get("id")):
+            return "available", "reachable"
+        return "unknown", "the response did not describe a model"
 
     # -- Retopologie-Job -------------------------------------------------
 
@@ -312,6 +336,18 @@ def extract_models(res):
         name = entry.get("name") or entry.get("displayName") or entry.get("title") or ""
         found.append((str(model_id), str(name)))
     return found
+
+
+def _has_model_list(res):
+    """True, wenn die Antwort eine (auch leere) Modell-Liste enthaelt.
+
+    Eine leere Liste ist eine gueltige Auskunft und keine unerwartete Form.
+    """
+    if isinstance(res, list):
+        return True
+    return isinstance(res, dict) and any(
+        isinstance(res.get(key), list) for key in ("models", "data", "items", "results")
+    )
 
 
 def extract_cursor(res):

@@ -158,6 +158,23 @@ assert len(prefs.catalogue()) == len(cat)
 assert models.known_ids() & prefs.available_ids() == models.known_ids()
 prefs.catalogue_json = ""
 prefs.catalogue_fetched = ""
+
+# --- probe results: only a definitive "missing" may ever block a run
+prefs.probe_json = ""
+assert prefs.probes() == {}
+assert prefs.probe_status("model_anything") == "unknown"
+prefs.set_probes({"model_a": ("available", "reachable")})
+prefs.set_probes({"model_b": ("missing", "not found for this account")})
+assert prefs.probe_status("model_a") == "available"
+assert prefs.probe_status("model_b") == "missing"
+assert len(prefs.probes()) == 2, prefs.probes()
+prefs.probe_json = "{ broken"
+assert prefs.probes() == {}, "a broken cache must not raise"
+prefs.probe_json = ""
+# an empty model list is a valid answer, not an unexpected shape
+assert _sc._has_model_list({"models": []})
+assert _sc._has_model_list([])
+assert not _sc._has_model_list({"message": "nope"})
 print("[TEST] catalogue parsing + comparison ok")
 
 # --- source object: Suzanne, subdivided, transformed, with material/vertex color
@@ -531,8 +548,8 @@ print("[TEST] operator credential guard ok")
 # --- a model the catalogue no longer offers must be refused before uploading
 prefs.api_key = "dummy-key"
 prefs.api_secret = "dummy-secret"
-prefs.set_catalogue([("model_something-else", "Other")])
-assert prefs.available_ids() == {"model_something-else"}
+prefs.set_probes({models.MODELS[0]["id"]: ("missing", "not found for this account")})
+assert prefs.probe_status(models.MODELS[0]["id"]) == "missing"
 for o in bpy.data.objects:
     o.select_set(False)
 bpy.ops.mesh.primitive_cube_add()
@@ -540,14 +557,17 @@ guard_obj = ctx.active_object
 try:
     res = bpy.ops.sb.ai_retopo()
 except RuntimeError as e:
-    assert "not offered by the API any more" in str(e), e
+    assert "does not exist for this account" in str(e), e
     res = {"CANCELLED"}
 assert res == {"CANCELLED"}, res
-assert "not offered" in scene.sb_ai_retopo.last_error, scene.sb_ai_retopo.last_error
+assert "does not exist" in scene.sb_ai_retopo.last_error, scene.sb_ai_retopo.last_error
 assert not scene.sb_ai_retopo.running
-# an empty catalogue must never block a run
-prefs.set_catalogue([])
-assert prefs.available_ids() == set()
+# an inconclusive check must never block a run
+prefs.probe_json = ""
+assert prefs.probe_status(models.MODELS[0]["id"]) == "unknown"
+prefs.set_probes({models.MODELS[0]["id"]: ("unknown", "no permission to query this model")})
+assert prefs.probe_status(models.MODELS[0]["id"]) == "unknown"
+prefs.probe_json = ""
 bpy.data.objects.remove(guard_obj, do_unlink=True)
 prefs.api_key = ""
 prefs.api_secret = ""

@@ -108,19 +108,29 @@ list shipped with a newer version of the add-on is ignored. The preferences say
 which file is in use and offer *Reset to Bundled*, which renames the user copy
 to `.bak` rather than deleting it, so hand-made edits are recoverable.
 
-**The catalogue can be checked against the API.** *Refresh Catalogue* fetches
-`GET /v1/models`, caches the result in the preferences and compares it with the
-registry. The preferences then list registry models the API no longer offers,
-and any model whose id or name looks like retopology but is missing from the
-registry, so a new one can be added deliberately. The panel marks a selected
-model that is gone, and a run is refused before the upload rather than failing
-afterwards. An empty or never-fetched catalogue never blocks anything.
+**A model id can be checked against the API.** *Check* next to the model id
+field asks `GET /v1/models/{id}` for every registry model plus whatever id is
+typed in, and stores the verdict: available, missing, or unknown. The panel
+marks a selected model that came back missing, and a run is refused before the
+upload rather than failing after it.
 
-The fetch runs in a worker thread and is only ever triggered by that button.
+Only a definitive *missing* ever blocks a run. Anything inconclusive, including
+a permission error or a model that was never checked, counts as unknown and
+holds nobody up.
+
+*Refresh Catalogue* fetches the list at `GET /v1/models`. Be aware what that
+list is: on this account it comes back as `{"models": []}` while Hunyuan
+demonstrably runs, so it enumerates the account's own trained models, not the
+platform generation models that `/v1/generate/custom/{id}` addresses. It is
+therefore useless for judging whether a platform model is available, which is
+why the per-id check exists. The preferences say how many registry models
+appear in the catalogue; zero of them is the signal that the list is the wrong
+one.
+
+Both calls run in a worker thread and only ever start from a button press.
 Drawing a panel must not cause network traffic, because Blender redraws
-constantly. The response shape of `GET /v1/models` is not contractually fixed,
-so it is parsed defensively and an unexpected shape is logged rather than
-raised.
+constantly. Neither response shape is contractually fixed, so both are parsed
+defensively; an empty list counts as a valid answer rather than a surprise.
 
 ## Pipeline
 

@@ -52,6 +52,13 @@ class SBAIRetopoPreferences(bpy.types.AddonPreferences):
     catalogue_json: StringProperty(default="", options={"HIDDEN"})
     catalogue_fetched: StringProperty(default="", options={"HIDDEN"})
     catalogue_error: StringProperty(default="", options={"HIDDEN"})
+    # Ergebnis der gezielten Abfragen: {model_id: [status, erlaeuterung]}
+    probe_json: StringProperty(default="", options={"HIDDEN"})
+    probe_id: StringProperty(
+        name="Model Id",
+        description="Any model id to check against the API, for example one that was removed",
+        default="model_meshy-remesh",
+    )
 
     def draw(self, context):
         layout = self.layout
@@ -87,6 +94,20 @@ class SBAIRetopoPreferences(bpy.types.AddonPreferences):
         row.operator("sb.ai_retopo_refresh_models", icon="FILE_REFRESH")
         row.operator("sb.ai_retopo_reload_registry", icon="FILE_REFRESH")
         row.operator("sb.ai_retopo_export_registry", icon="EXPORT")
+
+        probes = self.probes()
+        if probes:
+            sub = box.box()
+            sub.label(text="Checked directly against the API:", icon="CHECKMARK")
+            icons = {"available": "CHECKMARK", "missing": "CANCEL", "unknown": "QUESTION"}
+            for model_id, (status, note) in sorted(probes.items()):
+                row = sub.row()
+                row.alert = status == "missing"
+                row.label(text=f"{model_id}: {status} ({note})", icon=icons.get(status, "DOT"))
+
+        row = box.row(align=True)
+        row.prop(self, "probe_id", text="")
+        row.operator("sb.ai_retopo_probe_model", icon="VIEWZOOM")
 
         catalogue = self.catalogue()
         if self.catalogue_error:
@@ -155,6 +176,25 @@ class SBAIRetopoPreferences(bpy.types.AddonPreferences):
 
     def available_ids(self):
         return {model_id for model_id, _ in self.catalogue()}
+
+    def probes(self):
+        """Ergebnisse der gezielten Abfragen als {model_id: (status, note)}."""
+        if not self.probe_json:
+            return {}
+        try:
+            data = json.loads(self.probe_json)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        return {k: (v[0], v[1]) for k, v in data.items() if isinstance(v, list) and len(v) == 2}
+
+    def set_probes(self, results):
+        merged = self.probes()
+        merged.update(results)
+        self.probe_json = json.dumps({k: [s, n] for k, (s, n) in merged.items()})
+
+    def probe_status(self, model_id):
+        """'available', 'missing' oder 'unknown' fuer ein Modell."""
+        return self.probes().get(model_id, ("unknown", "not checked"))[0]
 
 
 def _wrap(text, width):
