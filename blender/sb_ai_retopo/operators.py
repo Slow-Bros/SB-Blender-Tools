@@ -119,7 +119,7 @@ class SB_OT_ai_retopo(bpy.types.Operator):
             return {"CANCELLED"}
 
         source = context.active_object
-        face_level = preferences.face_level_for_target(settings.target_faces, context)
+        face_level = settings.face_level
 
         job = _Job()
         job.temp_dir = tempfile.mkdtemp(prefix="sb_ai_retopo_", dir=bpy.app.tempdir or None)
@@ -145,8 +145,7 @@ class SB_OT_ai_retopo(bpy.types.Operator):
 
         _log(
             f"Export: {info['faces']} Faces -> {info['faces_exported']} Faces, "
-            f"{info['bytes'] / 1024 / 1024:.1f} MB | Ziel {settings.target_faces} -> faceLevel {face_level}, "
-            f"{settings.polygon_type}"
+            f"{info['bytes'] / 1024 / 1024:.1f} MB | faceLevel {face_level}, {settings.polygon_type}"
         )
 
         job.thread = threading.Thread(
@@ -217,9 +216,6 @@ class SB_OT_ai_retopo(bpy.types.Operator):
         try:
             obj, stats = mesh_io.import_result(
                 context, job.result_path, source,
-                target_faces=settings.target_faces,
-                force_exact=settings.force_exact_count,
-                polygon_type=settings.polygon_type,
                 hide_source=settings.hide_source,
             )
         except Exception as e:  # noqa: BLE001

@@ -28,10 +28,15 @@ ctx = bpy.context
 scene = ctx.scene
 assert hasattr(scene, "sb_ai_retopo"), "scene settings missing"
 prefs = preferences.get_prefs(ctx)
-assert preferences.face_level_for_target(1000, ctx) == "low"
-assert preferences.face_level_for_target(prefs.face_level_low_max + 1, ctx) == "medium"
-assert preferences.face_level_for_target(prefs.face_level_medium_max + 1, ctx) == "high"
-print("[TEST] registration + prefs ok")
+levels = [i.identifier for i in scene.sb_ai_retopo.bl_rna.properties["face_level"].enum_items]
+assert levels == ["low", "medium", "high"], levels
+assert scene.sb_ai_retopo.face_level == "medium"
+poly = [i.identifier for i in scene.sb_ai_retopo.bl_rna.properties["polygon_type"].enum_items]
+assert poly == ["quadrilateral", "triangle"], poly
+# Panel values must be exactly what the API accepts, no client-side mapping
+from sb_ai_retopo import scenario_client as _sc  # noqa: E402
+assert set(levels) == set(_sc.FACE_LEVELS) and set(poly) == set(_sc.POLYGON_TYPES)
+print("[TEST] registration + settings ok")
 
 # --- source object: Suzanne, subdivided, transformed, with material/vertex color
 bpy.ops.mesh.primitive_monkey_add()
@@ -82,8 +87,7 @@ bpy.ops.wm.obj_export(filepath=obj_path, export_selected_objects=True, export_ma
 bpy.data.objects.remove(sim, do_unlink=True)
 
 settings = scene.sb_ai_retopo
-new, stats = mesh_io.import_result(ctx, obj_path, src, target_faces=settings.target_faces,
-                                   force_exact=False, polygon_type="quadrilateral")
+new, stats = mesh_io.import_result(ctx, obj_path, src)
 ctx.view_layer.update()
 assert new.name == "Scan_retopo", new.name
 assert stats["fitted"], "bbox fit should have been applied to the normalized result"
@@ -105,12 +109,12 @@ err = max((slo - nlo).length, (shi - nhi).length)
 assert err < 1e-3, f"placement mismatch: {err}"
 print(f"[TEST] import + placement ok: {stats}, bbox error {err:.2e}")
 
-# Exact count decimation path
-new2, stats2 = mesh_io.import_result(ctx, obj_path, src, name="Scan_retopo_tri", target_faces=300,
-                                     force_exact=True, polygon_type="triangle")
-assert stats2["faces"] <= 320, stats2
-assert stats2["ngons"] == 0 and stats2["quads"] == 0, stats2
-print(f"[TEST] exact-count decimate ok: {stats2}")
+# Second import with an explicit name, source hidden afterwards
+new2, stats2 = mesh_io.import_result(ctx, obj_path, src, name="Scan_retopo_2", hide_source=True)
+assert new2.name == "Scan_retopo_2", new2.name
+assert src.hide_get() and "Scan" in bpy.data.objects, "source must be hidden, not deleted"
+src.hide_set(False)
+print(f"[TEST] named import + hide source ok: {stats2}")
 
 # Pure-python API parsers
 assert scenario_client.extract_job_id({"job": {"jobId": "j1"}}) == "j1"

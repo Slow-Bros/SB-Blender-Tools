@@ -6,17 +6,18 @@ from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, Po
 
 
 class SBAIRetopoSettings(bpy.types.PropertyGroup):
-    target_faces: IntProperty(
+    face_level: EnumProperty(
         name="Ziel-Polygone",
         description=(
-            "Gewuenschte Anzahl Faces. Die Scenario API kennt nur die Stufen "
-            "low/medium/high; die Zahl wird ueber die Schwellen in den Add-on-"
-            "Einstellungen auf eine Stufe abgebildet"
+            "Polygondichte des Ergebnisses. Entspricht dem faceLevel der "
+            "Scenario API, die nur diese drei Stufen kennt"
         ),
-        default=10000,
-        min=100,
-        soft_max=200000,
-        step=100,
+        items=(
+            ("low", "Low", "Starke Reduktion, wenigste Polygone"),
+            ("medium", "Medium", "Ausgewogene Reduktion"),
+            ("high", "High", "Geringe Reduktion, meiste Polygone"),
+        ),
+        default="medium",
     )
     polygon_type: EnumProperty(
         name="Polygone",
@@ -26,15 +27,6 @@ class SBAIRetopoSettings(bpy.types.PropertyGroup):
             ("triangle", "Triangles", "Dreieck-Topologie"),
         ),
         default="quadrilateral",
-    )
-    force_exact_count: BoolProperty(
-        name="Exakte Anzahl (Decimate)",
-        description=(
-            "Reduziert das KI-Ergebnis nach dem Import per Decimate auf die Ziel-"
-            "Polygonzahl, falls es mehr Faces hat. Bei Quads zerstoert das die "
-            "Quad-Topologie teilweise"
-        ),
-        default=False,
     )
     pre_decimate: BoolProperty(
         name="Pre-Dezimierung",

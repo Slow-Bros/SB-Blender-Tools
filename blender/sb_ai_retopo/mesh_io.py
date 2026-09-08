@@ -233,19 +233,6 @@ def _apply_smooth_shading(context, obj):
         mesh.attributes.remove(sharp_face)
 
 
-def _decimate_to(context, obj, target_faces, triangulate):
-    faces = len(obj.data.polygons)
-    if target_faces <= 0 or faces <= target_faces:
-        return
-    mod = obj.modifiers.new("SB_ExactCount", "DECIMATE")
-    mod.decimate_type = "COLLAPSE"
-    mod.ratio = target_faces / faces
-    mod.use_collapse_triangulate = triangulate
-    with context.temp_override(object=obj, active_object=obj, selected_objects=[obj],
-                               selected_editable_objects=[obj]):
-        bpy.ops.object.modifier_apply(modifier=mod.name)
-
-
 def face_stats(mesh):
     quads = tris = ngons = 0
     for p in mesh.polygons:
@@ -259,8 +246,7 @@ def face_stats(mesh):
     return {"faces": len(mesh.polygons), "quads": quads, "tris": tris, "ngons": ngons}
 
 
-def import_result(context, path, source_obj, *, name=None, target_faces=0,
-                  force_exact=False, polygon_type="quadrilateral", hide_source=False):
+def import_result(context, path, source_obj, *, name=None, hide_source=False):
     """Importiert das Retopo-Ergebnis, passt es auf das Original ein und legt
     es als neues Objekt neben dem Original ab.
 
@@ -278,9 +264,6 @@ def import_result(context, path, source_obj, *, name=None, target_faces=0,
         mesh.transform(fit)
 
     _apply_smooth_shading(context, obj)
-
-    if force_exact and target_faces > 0:
-        _decimate_to(context, obj, target_faces, triangulate=(polygon_type == "triangle"))
 
     # Benennen, in die Collections des Originals einsortieren, Transform uebernehmen
     base_name = name or f"{source_obj.name}_retopo"

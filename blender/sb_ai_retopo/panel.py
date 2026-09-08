@@ -6,8 +6,6 @@ import bpy
 from . import preferences
 from .operators import is_running
 
-FACE_LEVEL_LABELS = {"low": "Low", "medium": "Medium", "high": "High"}
-
 
 class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
@@ -40,13 +38,12 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
         # -- Einstellungen ------------------------------------------------
         col = layout.column(align=True)
         col.enabled = not running
-        col.prop(settings, "target_faces")
-        level = preferences.face_level_for_target(settings.target_faces, context)
-        col.label(text=f"Scenario faceLevel: {FACE_LEVEL_LABELS[level]}", icon="RIGHTARROW_THIN")
+        col.label(text="Ziel-Polygone")
+        col.prop(settings, "face_level", expand=True)
         col.separator()
+        col.label(text="Polygone")
         col.prop(settings, "polygon_type", expand=True)
         col.separator()
-        col.prop(settings, "force_exact_count")
         col.prop(settings, "hide_source")
 
         row = col.row(align=True)

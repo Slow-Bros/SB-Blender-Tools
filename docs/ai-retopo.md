@@ -34,9 +34,8 @@ module, exactly as `scripts/test_ai_retopo_headless.py` does, or symlink
 
 | Setting | Meaning |
 | --- | --- |
-| Ziel-Polygone | Target face count (number input). See *Face count mapping* below. |
-| Quads / Triangles | `polygonType` sent to the API (`quadrilateral` / `triangle`). |
-| Exakte Anzahl (Decimate) | After import, reduce with a Decimate (collapse) modifier if the AI result has more faces than the target. Off by default; breaks quad topology in Quads mode. |
+| Ziel-Polygone | Low / Medium / High — sent as `faceLevel`. See *Polygon density* below. |
+| Polygone | Quads / Triangles — sent as `polygonType` (`quadrilateral` / `triangle`). |
 | Original ausblenden | Hide (not delete) the source object after a successful import. |
 | Pre-Dezimierung | Decimate the upload copy before sending (API limit 200 MB). The original is untouched. |
 
@@ -47,19 +46,18 @@ errors are also printed to the system console with the prefix `[SB-AI-RETOPO]`.
 Result: a new object `<name>_retopo` in the same collection(s) as the source,
 with the same parent and world matrix, smooth shaded, selected and active.
 
-## Face count mapping (API limitation)
+## Polygon density (API limitation)
 
 The Scenario / Hunyuan smart-topology endpoint does **not** accept a numeric
 face count. Its only density control is `faceLevel` with the values `low`,
-`medium`, `high` (same as the *Detail* dropdown in Phototron). The panel's
-numeric input is therefore mapped to a level via two thresholds in the add-on
-preferences (defaults: ≤ 5 000 → low, ≤ 20 000 → medium, above → high). The
-chosen level is shown under the number field. Adjust the thresholds once you
-know what face counts the levels actually produce for your scans.
+`medium` and `high` (the same three options as the *Detail* dropdown in
+Phototron), so the panel offers exactly those three and nothing else. The face
+count of the result is whatever the model produces for the chosen level and the
+given input mesh.
 
-If an exact count matters, enable *Exakte Anzahl (Decimate)*: this is a plain
-Blender decimation applied to the AI result, so it only ever reduces and, for
-quad meshes, introduces triangles.
+If an exact face count is needed, decimate the result manually afterwards with
+Blender's Decimate modifier. On a quad result that trades quad topology for
+triangles, which is why it is not part of the add-on.
 
 ## Pipeline
 

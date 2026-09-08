@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Add-on-Einstellungen: Scenario-Zugangsdaten und Face-Level-Schwellen."""
+"""Add-on-Einstellungen: Scenario-Zugangsdaten und Verbindungsparameter."""
 
 import os
 
@@ -22,22 +22,6 @@ class SBAIRetopoPreferences(bpy.types.AddonPreferences):
         name="API Secret",
         description=f"Scenario API secret (alternativ Umgebungsvariable {ENV_SECRET})",
         subtype="PASSWORD",
-    )
-
-    # Die Scenario API kennt nur drei Stufen (low/medium/high). Die im Panel
-    # eingegebene Ziel-Polygonzahl wird über diese Schwellen auf eine Stufe
-    # abgebildet. Werte sind Erfahrungswerte und dürfen angepasst werden.
-    face_level_low_max: IntProperty(
-        name="Low bis",
-        description="Ziel-Faces bis einschließlich dieses Werts → faceLevel 'low'",
-        default=5000,
-        min=1,
-    )
-    face_level_medium_max: IntProperty(
-        name="Medium bis",
-        description="Ziel-Faces bis einschließlich dieses Werts → faceLevel 'medium', darüber 'high'",
-        default=20000,
-        min=1,
     )
 
     poll_interval: IntProperty(
@@ -67,13 +51,6 @@ class SBAIRetopoPreferences(bpy.types.AddonPreferences):
         )
 
         box = layout.box()
-        box.label(text="Ziel-Faces → Scenario faceLevel", icon="MESH_DATA")
-        row = box.row(align=True)
-        row.prop(self, "face_level_low_max")
-        row.prop(self, "face_level_medium_max")
-        box.label(text="Die API akzeptiert nur low / medium / high, keine exakte Zahl.", icon="INFO")
-
-        box = layout.box()
         box.label(text="Verbindung", icon="TIME")
         row = box.row(align=True)
         row.prop(self, "poll_interval")
@@ -91,15 +68,6 @@ def get_credentials(context=None):
     key = (prefs.api_key or os.environ.get(ENV_KEY, "")).strip()
     secret = (prefs.api_secret or os.environ.get(ENV_SECRET, "")).strip()
     return key, secret
-
-
-def face_level_for_target(target_faces: int, context=None) -> str:
-    prefs = get_prefs(context)
-    if target_faces <= prefs.face_level_low_max:
-        return "low"
-    if target_faces <= prefs.face_level_medium_max:
-        return "medium"
-    return "high"
 
 
 def register():
