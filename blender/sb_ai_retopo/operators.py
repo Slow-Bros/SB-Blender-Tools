@@ -248,6 +248,8 @@ class SB_OT_ai_retopo(bpy.types.Operator):
             obj, stats = mesh_io.import_result(
                 context, job.result_path, source,
                 hide_source=settings.hide_source,
+                remove_fragments=settings.remove_fragments,
+                fit_to_original=settings.fit_to_original,
             )
         except Exception as e:  # noqa: BLE001
             _log(traceback.format_exc())
@@ -261,11 +263,25 @@ class SB_OT_ai_retopo(bpy.types.Operator):
         settings.last_result = summary
         _log(summary)
 
-        if stats["outlier_parts"]:
-            warning = (
-                f"The result has {stats['outlier_parts']} fragment(s) outside the object. "
-                "They were ignored when fitting; check the mesh and delete them if unwanted."
+        notes = []
+        if stats["fragments_removed"]:
+            notes.append(
+                f"Removed {stats['outlier_parts']} stray fragment(s), "
+                f"{stats['fragments_removed']} vertices."
             )
+        elif stats["outlier_parts"]:
+            notes.append(
+                f"The result has {stats['outlier_parts']} fragment(s) outside the object, "
+                "kept because removal is switched off."
+            )
+        if stats["deviates"]:
+            notes.append(
+                f"Size differs by factor {stats['scale']:.3f} and the centre by "
+                f"{stats['offset']:.3f} from the original. Left as returned; "
+                "switch on 'Fit to Original' if the object really sits wrong."
+            )
+        if notes:
+            warning = " ".join(notes)
             settings.last_warning = warning
             _log(warning)
             self.report({"WARNING"}, warning)

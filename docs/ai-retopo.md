@@ -3,7 +3,7 @@
 Blender port of the AI retopology step from the Phototron desktop app
 (`apps/desktop/public/ipc/retopology.js`). The active mesh is sent to the
 Scenario API (Tencent Hunyuan PolyGen 1.5, model `model_tencent-smarttopology`),
-retopologized, and imported back as a **new object at the exact position of the
+retopologized, and imported back as a **new object at the position of the
 original**. The original object is never modified.
 
 Location: `blender/sb_ai_retopo/` — Blender 4.2+ extension (`blender_manifest.toml`),
@@ -34,11 +34,13 @@ module, exactly as `scripts/test_ai_retopo_headless.py` does, or symlink
 
 | Setting | Meaning |
 | --- | --- |
-| KI-Modell | Which retopology model runs the job. See *Models* below. |
-| Ziel-Polygone | A face count for models that accept one, otherwise Low / Medium / High. The panel shows the selected model's allowed range. |
-| Polygone | Quads / Triangles, mapped to whatever the selected model calls it. |
-| Original ausblenden | Hide (not delete) the source object after a successful import. |
-| Pre-Dezimierung | Decimate the upload copy before sending (API limit 200 MB). The original is untouched. |
+| AI Model | Which retopology model runs the job. See *Models* below. |
+| Target Polygons | A face count for models that accept one, otherwise Low / Medium / High. The panel shows the selected model's allowed range. |
+| Polygons | Quads / Triangles, mapped to whatever the selected model calls it. |
+| Remove Stray Fragments | Delete separate parts the model placed outside the object. On by default. See *Stray fragments* below. |
+| Fit to Original | Force the result onto the original's bounding box. Off by default. See *Placement* below. |
+| Hide Original | Hide (not delete) the source object after a successful import. |
+| Pre-Decimation | Decimate the upload copy before sending (API limit 200 MB). The original is untouched. |
 
 Requirements: Object Mode, active object is a mesh. One job at a time; the
 panel shows a progress bar and a cancel button while running. Progress and
@@ -135,40 +137,55 @@ raised.
    `models.build_request` for the selected model, carrying the uploaded asset
    id, the topology and either a face count or a level.
 4. **Poll** `GET /v1/jobs/{id}` until `success`, then `GET /v1/assets/{id}` and
-   download the mesh (OBJ preferred, GLB fallback).
-5. **Import** (main thread): import OBJ (Y-up, matching the glTF convention) or
-   GLB, merge into one mesh object, run the bounding-box safety net described
-   below, apply smooth shading, then assign the source's collections, parent and
-   world matrix.
+   download the mesh, preferring OBJ, then GLB, then FBX.
+5. **Import** (main thread): import OBJ (Y-up, matching the glTF convention),
+   GLB or FBX, merge into one mesh object, remove stray fragments, measure size
+   and position against the source, apply smooth shading, then assign the
+   source's collections, parent and world matrix.
 
 The worker thread never touches `bpy`; it communicates via a queue that a modal
 operator drains on a timer.
 
-## Bounding-box safety net
+## Placement
 
-Hunyuan may return the mesh normalised in scale and position, so the import
-compares the result against the source and corrects it if needed. The rules
-follow `bakeTexturesBlender` in Phototron:
+The result is placed by giving the new object the source object's world matrix.
+The mesh data itself is **not** transformed by default.
 
-- The comparison uses the **diagonal** of the bounding box, not the longest
-  single axis. The diagonal stays meaningful when proportions shift slightly and
-  a different axis becomes the longest one.
-- A size difference is only corrected above **one percent**, a position offset
-  only above one percent of the source diagonal. A result that already sits
-  correctly is left untouched.
-- The measurement **ignores stray fragments**. The model sometimes produces a
-  few faces outside the object; measured over all vertices they inflate the box
-  and throw off both scale and position. Separate parts are therefore excluded
-  when they stick out of the main part's box by more than ten percent of its
-  diagonal. Parts inside that box stay in, so an object that legitimately
-  consists of several pieces is measured in full. If the excluded parts would
-  hold more than ten percent of the vertices, nothing is excluded, because that
-  is no longer a fragment.
+That is deliberate and was learned the hard way. The first version forced the
+result's bounding box onto the source's, following the alignment step in
+Phototron's `bakeTexturesBlender`. The correction never demonstrably helped, and
+twice it displaced and rescaled a result that had been correct, because
+fragments the model had placed outside the object inflated the measurement. The
+models return the result in the coordinate space of the uploaded mesh, so there
+is normally nothing to correct. Phototron itself only corrects beyond a one
+percent deviation, which says the same thing.
 
-Every run prints the measured diagonals, the resulting factor, the offset and
-the number of separate parts to the system console. When fragments are found,
-the panel also shows a warning: they are ignored for the fit but stay in the
-mesh, so check and delete them yourself.
+Size and position are still measured on every run and written to the system
+console: both bounding-box diagonals, the resulting factor and the offset. If
+they differ beyond one percent, the panel says so and leaves the mesh alone.
+*Fit to Original* then forces the correction, for the case where a model really
+does return normalised geometry.
+
+The measurement uses the box diagonal rather than the longest single axis, so a
+slight shift in proportions cannot pair up two unrelated axes.
+
+## Stray fragments
+
+The models sometimes emit a few faces outside the object. *Remove Stray
+Fragments*, on by default, deletes them on import. A separate part counts as a
+fragment only when it sticks out of the main part's bounding box by more than
+ten percent of that box's diagonal, so an object that legitimately consists of
+several pieces stays intact. Suzanne's eyes, for example, sit inside the head's
+box and are kept. If the parts flagged as fragments would hold more than ten
+percent of the vertices, nothing is removed, because that is no longer a
+fragment but a misread of the mesh.
+
+Switching the option off keeps everything the model returned. The panel reports
+how many fragments were found either way.
+
+Fragments that are topologically connected to the main mesh cannot be found this
+way, since the detection works on separate parts. A result with attached spikes
+needs manual cleanup.
 
 ## Test
 

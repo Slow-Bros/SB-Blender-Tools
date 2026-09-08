@@ -64,6 +64,8 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
         col.label(text="Polygons")
         col.prop(settings, "polygon_type", expand=True)
         col.separator()
+        col.prop(settings, "remove_fragments")
+        col.prop(settings, "fit_to_original")
         col.prop(settings, "hide_source")
 
         row = col.row(align=True)

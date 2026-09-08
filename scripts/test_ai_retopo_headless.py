@@ -224,7 +224,7 @@ bpy.ops.wm.obj_export(filepath=obj_path, export_selected_objects=True, export_ma
 bpy.data.objects.remove(sim, do_unlink=True)
 
 settings = scene.sb_ai_retopo
-new, stats = mesh_io.import_result(ctx, obj_path, src)
+new, stats = mesh_io.import_result(ctx, obj_path, src, fit_to_original=True)
 ctx.view_layer.update()
 assert new.name == "Scan_retopo", new.name
 assert stats["fitted"], "bbox fit should have been applied to the normalized result"
@@ -250,7 +250,8 @@ assert stats["parts"] == 3 and stats["outlier_parts"] == 0 and not stats["filter
 print(f"[TEST] import + placement ok, bbox error {err:.2e}, parts {stats['parts']}")
 
 # Second import with an explicit name, source hidden afterwards
-new2, stats2 = mesh_io.import_result(ctx, obj_path, src, name="Scan_retopo_2", hide_source=True)
+new2, stats2 = mesh_io.import_result(ctx, obj_path, src, name="Scan_retopo_2",
+                                    hide_source=True, fit_to_original=True)
 assert new2.name == "Scan_retopo_2", new2.name
 assert src.hide_get() and "Scan" in bpy.data.objects, "source must be hidden, not deleted"
 src.hide_set(False)
@@ -270,7 +271,8 @@ bpy.ops.wm.obj_export(filepath=stray_path, export_selected_objects=True, export_
 for o in (main_part, stray):
     bpy.data.objects.remove(o, do_unlink=True)
 
-new3, stats3 = mesh_io.import_result(ctx, stray_path, src, name="Scan_retopo_stray")
+new3, stats3 = mesh_io.import_result(ctx, stray_path, src, name="Scan_retopo_stray",
+                                    remove_fragments=False, fit_to_original=True)
 ctx.view_layer.update()
 # Suzanne itself is 3 parts (head + two eyes), the stray cube is the 4th.
 # Only the cube sticks out of the head's box, so only it may be excluded.
@@ -342,7 +344,8 @@ src2.rotation_euler = Euler((0.2, 1.3, 0.5))
 src2.scale = Vector((3.0, 3.0, 3.0))
 ctx.view_layer.update()
 
-fixed, fstats = mesh_io.import_result(ctx, stray_path, src2, name="Ball_retopo")
+fixed, fstats = mesh_io.import_result(ctx, stray_path, src2, name="Ball_retopo",
+                                      remove_fragments=False, fit_to_original=True)
 ctx.view_layer.update()
 assert fstats["parts"] == 2 and fstats["filtered"], fstats
 b_lo, b_hi = world_bbox(src2)
@@ -381,7 +384,8 @@ fbx_target.rotation_euler = Euler((0.9, 0.1, 0.4))
 fbx_target.scale = Vector((1.5, 1.5, 1.5))
 ctx.view_layer.update()
 
-fbx_obj, fbx_stats = mesh_io.import_result(ctx, fbx_path, fbx_target, name="FbxBall_retopo")
+fbx_obj, fbx_stats = mesh_io.import_result(ctx, fbx_path, fbx_target, name="FbxBall_retopo",
+                                           fit_to_original=True)
 ctx.view_layer.update()
 assert fbx_obj.name == "FbxBall_retopo", fbx_obj.name
 assert fbx_stats["faces"] > 100, fbx_stats
@@ -392,6 +396,67 @@ assert fbx_err < 1e-3, f"FBX placement mismatch: {fbx_err}"
 print(f"[TEST] FBX result imported and placed ok: {fbx_stats['faces']} faces, error {fbx_err:.2e}")
 bpy.data.objects.remove(fbx_obj, do_unlink=True)
 bpy.data.objects.remove(fbx_target, do_unlink=True)
+
+# --- the default path must not touch the geometry. A result that comes back in
+# the space of the uploaded mesh is already correct; forcing it onto the
+# original's bounding box is what displaced and rescaled real results twice.
+bpy.ops.mesh.primitive_monkey_add()
+plain = ctx.active_object
+plain.name = "PlainSource"
+plain.location = Vector((-2.0, 4.0, 1.0))
+plain.rotation_euler = Euler((0.4, 0.2, 1.7))
+plain.scale = Vector((2.5, 2.5, 2.5))
+ctx.view_layer.update()
+
+bpy.ops.object.select_all(action="DESELECT")
+plain.select_set(True)
+ctx.view_layer.objects.active = plain
+plain_path = os.path.join(tmp, "plain_result.obj")
+# Export in local space, exactly what the API gets and gives back
+plain_mesh_copy = plain.data.copy()
+carrier = bpy.data.objects.new("carrier", plain_mesh_copy)
+scene.collection.objects.link(carrier)
+bpy.ops.object.select_all(action="DESELECT")
+carrier.select_set(True)
+ctx.view_layer.objects.active = carrier
+bpy.ops.wm.obj_export(filepath=plain_path, export_selected_objects=True, export_materials=False)
+bpy.data.objects.remove(carrier, do_unlink=True)
+
+before_co = [tuple(v.co) for v in plain.data.vertices[:20]]
+plain_obj, plain_stats = mesh_io.import_result(ctx, plain_path, plain, name="Plain_retopo")
+ctx.view_layer.update()
+assert not plain_stats["fitted"], "the default must not transform the mesh"
+assert not plain_stats["deviates"], plain_stats
+after_co = [tuple(v.co) for v in plain_obj.data.vertices[:20]]
+assert all(abs(a[i] - b[i]) < 1e-5 for a, b in zip(before_co, after_co) for i in range(3)), \
+    "geometry must come through unchanged"
+p_lo, p_hi = world_bbox(plain)
+q_lo, q_hi = world_bbox(plain_obj)
+plain_err = max((p_lo - q_lo).length, (p_hi - q_hi).length)
+assert plain_err < 1e-4, f"untouched result must sit on the original: {plain_err}"
+print(f"[TEST] default leaves geometry untouched, placement error {plain_err:.2e}")
+bpy.data.objects.remove(plain_obj, do_unlink=True)
+
+# --- stray fragments are deleted by default, and the mesh still lands right
+frag_obj, frag_stats = mesh_io.import_result(ctx, stray_path, src, name="Frag_retopo")
+assert frag_stats["outlier_parts"] >= 1, frag_stats
+assert frag_stats["fragments_removed"] > 0, frag_stats
+assert not frag_stats["fitted"], "removing fragments must not imply a transform"
+# The reported counts describe what was found, so check the mesh itself
+post = mesh_io.analyze_parts(frag_obj.data)
+assert post["outlier_parts"] == 0, post
+print(f"[TEST] stray fragments removed by default: {frag_stats['fragments_removed']} vertices")
+bpy.data.objects.remove(frag_obj, do_unlink=True)
+
+# --- keeping them is still possible, and then nothing is deleted
+kept_obj, kept_stats = mesh_io.import_result(ctx, stray_path, src, name="Kept_retopo",
+                                             remove_fragments=False)
+assert kept_stats["fragments_removed"] == 0, kept_stats
+assert kept_stats["outlier_parts"] >= 1, kept_stats
+assert kept_stats["faces"] > frag_stats["faces"], (kept_stats["faces"], frag_stats["faces"])
+print("[TEST] fragments can be kept on request")
+bpy.data.objects.remove(kept_obj, do_unlink=True)
+bpy.data.objects.remove(plain, do_unlink=True)
 
 # Pure-python API parsers
 assert scenario_client.extract_job_id({"job": {"jobId": "j1"}}) == "j1"

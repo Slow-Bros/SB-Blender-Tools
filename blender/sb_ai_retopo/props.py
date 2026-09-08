@@ -68,6 +68,24 @@ class SBAIRetopoSettings(bpy.types.PropertyGroup):
         soft_max=2000000,
         step=1000,
     )
+    remove_fragments: BoolProperty(
+        name="Remove Stray Fragments",
+        description=(
+            "Delete separate parts the model placed outside the object. They "
+            "are artefacts, and they distort any measurement of size and position"
+        ),
+        default=True,
+    )
+    fit_to_original: BoolProperty(
+        name="Fit to Original",
+        description=(
+            "Force the result onto the bounding box of the original. Off by "
+            "default because the models return the result in the coordinate "
+            "space of the uploaded mesh, so no correction is needed. Switch it "
+            "on only if a result really comes back scaled or displaced"
+        ),
+        default=False,
+    )
     hide_source: BoolProperty(
         name="Hide Original",
         description="Hide the source object in the viewport after a successful import; it is kept",

@@ -4,15 +4,18 @@
 Laeuft ausschliesslich im Blender-Hauptthread (bpy-Zugriff).
 
 Koordinaten: Das Quellobjekt wird im lokalen Raum (Objekttransform = Identity)
-als GLB exportiert. Das Ergebnis wird importiert, als Sicherheitsnetz auf die
-lokale Bounding-Box des Originals geprueft und bekommt anschliessend die
-Welt-Matrix des Originals. Damit landet es an der urspruenglichen Position.
+als GLB exportiert. Die Modelle liefern das Ergebnis in genau diesem Raum
+zurueck, deshalb genuegt es, dem neuen Objekt die Welt-Matrix des Originals zu
+geben. Am Mesh selbst wird standardmaessig nichts verrechnet.
 
-Die Bounding-Box-Pruefung folgt Phototron (bakeTexturesBlender in
-apps/desktop/public/ipc/retopology.js): verglichen wird die Diagonale der Box,
-und korrigiert wird erst ab einer Abweichung von einem Prozent. Gemessen wird
-am groessten zusammenhaengenden Teil des Ergebnisses, damit einzelne von der
-KI erzeugte Fragmente ausserhalb des Objekts die Messung nicht verfaelschen.
+Das war nicht immer so: zuerst wurde die Bounding-Box des Ergebnisses auf die
+des Originals gezwungen. Diese Korrektur hat nie nachweislich geholfen, aber
+zweimal ein korrekt sitzendes Ergebnis verschoben und falsch skaliert, weil von
+der KI erzeugte Fragmente die Messung aufgeblaeht haben. Sie ist deshalb nur
+noch auf ausdrueckliche Anforderung aktiv (fit_to_original). Gemessen und
+protokolliert wird weiterhin immer, damit eine echte Abweichung auffaellt.
+Auch Phototron korrigiert erst ab einem Prozent Abweichung der Box-Diagonale,
+was bestaetigt, dass der Normalfall keine Korrektur braucht.
 """
 
 import os
@@ -237,17 +240,12 @@ def connected_components(mesh):
     return np.fromiter((find(i) for i in range(n)), dtype=np.int32, count=n)
 
 
-def bbox_without_outliers(mesh):
-    """Bounding-Box eines Meshes ohne abseits liegende Fragmente.
+def analyze_parts(mesh):
+    """Zerlegt das Mesh in zusammenhaengende Teile und trennt Fragmente ab.
 
-    Einzelne von der KI erzeugte Faces ausserhalb des Objekts wuerden eine Box
-    ueber alle Vertices aufblaehen und damit Groesse und Mittelpunkt
-    verfaelschen. Ausgeschlossen wird ein getrenntes Teil aber nur, wenn es
-    raeumlich deutlich aus der Box des Hauptteils herausragt: ein Objekt darf
-    voellig legitim aus mehreren Teilen bestehen. Suzanne etwa besteht aus Kopf
-    und zwei Augen, die innerhalb der Kopf-Box liegen und mitgemessen werden.
-
-    Returns: (lo, hi, info) mit info = {parts, outlier_parts, outlier_fraction, filtered}
+    Returns: dict mit full_lo/full_hi (Box ueber alles), lo/hi (Box ohne
+    Fragmente), outlier_mask (bool-Array ueber die Vertices oder None) sowie
+    parts, outlier_parts, outlier_fraction und filtered.
     """
     n = len(mesh.vertices)
     if n == 0:
@@ -259,17 +257,21 @@ def bbox_without_outliers(mesh):
 
     full_lo = Vector(co.min(axis=0).tolist())
     full_hi = Vector(co.max(axis=0).tolist())
-    info = {"parts": 1, "outlier_parts": 0, "outlier_fraction": 0.0, "filtered": False}
+    result = {
+        "full_lo": full_lo, "full_hi": full_hi, "lo": full_lo, "hi": full_hi,
+        "outlier_mask": None,
+        "parts": 1, "outlier_parts": 0, "outlier_fraction": 0.0, "filtered": False,
+    }
 
     if n > MAX_VERTS_FOR_PART_ANALYSIS or len(mesh.edges) == 0:
-        return full_lo, full_hi, info
+        return result
 
     labels = connected_components(mesh)
     counts = np.bincount(labels, minlength=n)
     roots = [int(r) for r in np.nonzero(counts)[0]]
-    info["parts"] = len(roots)
+    result["parts"] = len(roots)
     if len(roots) == 1:
-        return full_lo, full_hi, info
+        return result
 
     part_lo, part_hi = {}, {}
     for r in roots:
@@ -299,15 +301,49 @@ def bbox_without_outliers(mesh):
 
     outliers = [r for r in roots if r not in kept]
     if not outliers:
-        return full_lo, full_hi, info
+        return result
 
-    info["outlier_parts"] = len(outliers)
-    info["outlier_fraction"] = float(sum(counts[r] for r in outliers)) / n
-    if info["outlier_fraction"] > MAX_OUTLIER_FRACTION:
-        return full_lo, full_hi, info
+    result["outlier_parts"] = len(outliers)
+    result["outlier_fraction"] = float(sum(counts[r] for r in outliers)) / n
+    if result["outlier_fraction"] > MAX_OUTLIER_FRACTION:
+        # So viel Geometrie ist kein Fragment mehr; nichts aussortieren
+        return result
 
-    info["filtered"] = True
-    return Vector(lo.tolist()), Vector(hi.tolist()), info
+    result["filtered"] = True
+    result["lo"] = Vector(lo.tolist())
+    result["hi"] = Vector(hi.tolist())
+    result["outlier_mask"] = np.isin(labels, outliers)
+    return result
+
+
+def remove_vertices(mesh, mask):
+    """Loescht die durch die Maske markierten Vertices samt ihrer Faces."""
+    indices = np.nonzero(mask)[0]
+    if len(indices) == 0:
+        return 0
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(mesh)
+        bm.verts.ensure_lookup_table()
+        doomed = [bm.verts[int(i)] for i in indices]
+        bmesh.ops.delete(bm, geom=doomed, context="VERTS")
+        bm.to_mesh(mesh)
+    finally:
+        bm.free()
+    mesh.update()
+    return len(indices)
+
+
+def bbox_without_outliers(mesh):
+    """Bounding-Box eines Meshes ohne abseits liegende Fragmente.
+
+    Duenne Huelle um analyze_parts, damit Aufrufer nur die Box brauchen.
+
+    Returns: (lo, hi, info) mit info = {parts, outlier_parts, outlier_fraction, filtered}
+    """
+    a = analyze_parts(mesh)
+    info = {k: a[k] for k in ("parts", "outlier_parts", "outlier_fraction", "filtered")}
+    return a["lo"], a["hi"], info
 
 
 def fit_matrix(src_lo, src_hi, res_lo, res_hi):
@@ -446,9 +482,16 @@ def face_stats(mesh):
     return {"faces": len(mesh.polygons), "quads": quads, "tris": tris, "ngons": ngons}
 
 
-def import_result(context, path, source_obj, *, name=None, hide_source=False):
-    """Importiert das Retopo-Ergebnis, passt es auf das Original ein und legt
-    es als neues Objekt neben dem Original ab.
+def import_result(context, path, source_obj, *, name=None, hide_source=False,
+                  remove_fragments=True, fit_to_original=False):
+    """Importiert das Retopo-Ergebnis und legt es als neues Objekt neben dem
+    Original ab.
+
+    Die Modelle liefern das Ergebnis im Koordinatenraum des hochgeladenen
+    Meshes zurueck, deshalb genuegt die Welt-Matrix des Originals und es wird
+    standardmaessig NICHTS am Mesh verrechnet. Groesse und Lage werden nur
+    gemessen und protokolliert. fit_to_original erzwingt die Korrektur fuer
+    den Fall, dass ein Modell doch normalisiert zurueckgibt.
 
     Returns: (new_object, stats_dict)
     """
@@ -458,30 +501,46 @@ def import_result(context, path, source_obj, *, name=None, hide_source=False):
     obj = _consolidate(context, new_objects)
     mesh = obj.data
 
-    res_lo, res_hi, part_info = bbox_without_outliers(mesh)
-    fit, fit_info = fit_matrix(src_lo, src_hi, res_lo, res_hi)
-
+    analysis = analyze_parts(mesh)
+    part_info = {k: analysis[k] for k in ("parts", "outlier_parts", "outlier_fraction", "filtered")}
     if part_info["parts"] > 1:
         _log(
             f"Result consists of {part_info['parts']} separate parts, "
             f"{part_info['outlier_parts']} of them outliers "
             f"({part_info['outlier_fraction'] * 100:.2f}% of the vertices)"
-            + (", ignored when measuring" if part_info["filtered"] else ", all included in the measurement")
         )
+
+    removed = 0
+    if remove_fragments and analysis["outlier_mask"] is not None:
+        removed = remove_vertices(mesh, analysis["outlier_mask"])
+        _log(f"Removed {removed} vertices of {part_info['outlier_parts']} stray fragment(s)")
+        analysis = analyze_parts(mesh)
+    part_info["fragments_removed"] = removed
+
+    res_lo, res_hi = analysis["lo"], analysis["hi"]
+    fit, fit_info = fit_matrix(src_lo, src_hi, res_lo, res_hi)
     _log(
         f"Bounding box: source {fit_info['src_diag']:.4f}, result {fit_info['res_diag']:.4f}, "
         f"factor {fit_info['scale']:.6f}, offset {fit_info['offset']:.4f}"
     )
+
+    applied = False
     if fit is None:
-        _log("Size and position within tolerance, no correction applied")
-    else:
+        _log("Size and position match the original, nothing to correct")
+    elif fit_to_original:
         parts = []
         if fit_info["scaled"]:
             parts.append(f"scaled by {fit_info['scale']:.4f}")
         if fit_info["moved"]:
             parts.append(f"moved by {fit_info['offset']:.4f}")
-        _log("Correction: " + " and ".join(parts))
+        _log("Fit to original: " + " and ".join(parts))
         mesh.transform(fit)
+        applied = True
+    else:
+        _log(
+            "Size or position differ from the original, left as returned. "
+            "Enable 'Fit to Original' if the result really is misplaced."
+        )
 
     _apply_smooth_shading(context, obj)
 
@@ -515,7 +574,9 @@ def import_result(context, path, source_obj, *, name=None, hide_source=False):
         pass
 
     stats = face_stats(mesh)
-    stats["fitted"] = fit is not None
+    stats["fitted"] = applied
+    # Abweichung ohne angewandte Korrektur: das Panel warnt darauf hin
+    stats["deviates"] = fit is not None and not applied
     stats.update(fit_info)
     stats.update(part_info)
     return obj, stats
