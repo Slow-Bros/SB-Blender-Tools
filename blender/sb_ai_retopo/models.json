@@ -2,9 +2,7 @@
   "_comment": [
     "Retopology models of the Scenario API. Edit this file to add a model,",
     "adjust a range or drop one that is gone, without touching any Python.",
-    "A user copy at <Blender config>/sb_ai_retopo_models.json overrides this",
-    "file and survives reinstalling the add-on; write one with the",
-    "'Export Model List' button in the add-on preferences.",
+    "Restart Blender afterwards.",
     "",
     "density: 'count' for models taking a target face count, 'level' for",
     "models offering only low/medium/high. file_param, polygon_param and",
