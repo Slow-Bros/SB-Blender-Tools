@@ -74,8 +74,12 @@ the import goes through Blender's FBX importer. An unrecognised format is logged
 with its MIME type, size and first bytes, so a new output format can be
 identified instead of failing as an opaque unknown file.
 
-**Meshy Remesh (`model_meshy-remesh`) was removed** from the registry. It needs a
-Meshy plan that the account does not have, so every call is rejected. Its
+**Meshy Remesh (`model_meshy-remesh`) was removed** from the registry after a
+call was rejected for our account. The reason was never confirmed against the
+API response, so treat it as unavailable rather than impossible. The model id
+matches the documentation, and *Refresh Catalogue* settles the question at no
+cost: if the id shows up in the catalogue, availability is not the problem and
+the failure was something else. Its
 verified parameters are kept in the comment block at the top of `models.json`
 and can be pasted back if a plan is added later.
 

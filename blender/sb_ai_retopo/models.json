@@ -15,8 +15,9 @@
     "Removed on purpose: model_meshy-remesh. Its parameters were file param",
     "'model', topology quad/triangle, targetPolycount 100 to 300000 with a",
     "default of 30000, plus extra resizeHeight 0 and originAt 'empty'. It",
-    "needs a Meshy plan this account does not have. Add it back if that",
-    "changes."
+    "was rejected for this account; the reason was never read off the API",
+    "response, so it may well be usable. Check with 'Refresh Catalogue' and",
+    "paste the entry back if the id shows up."
   ],
   "version": 1,
   "models": [
