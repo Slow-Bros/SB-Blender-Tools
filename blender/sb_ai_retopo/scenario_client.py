@@ -27,6 +27,10 @@ MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # Limit der Hunyuan-Modelle
 REQUEST_TIMEOUT = 60
 
 POLYGON_TYPES = ("quadrilateral", "triangle")
+
+# Kontroll-ID fuer die Modellpruefung. Antwortet die API auch hierauf mit
+# "vorhanden", unterscheidet sie nicht und ihre Auskunft ist wertlos.
+CONTROL_MODEL_ID = "model_sb-control-this-cannot-exist"
 FACE_LEVELS = ("low", "medium", "high")
 
 MIME_TO_EXT = {
@@ -179,37 +183,6 @@ class ScenarioClient:
 
     # -- Modellkatalog ---------------------------------------------------
 
-    def list_models(self, max_pages=20):
-        """Holt den Modellkatalog ueber GET /v1/models.
-
-        Die Antwortform ist nicht vertraglich zugesichert, deshalb wird
-        tolerant geparst und bei Bedarf paginiert.
-
-        Returns: Liste von (id, name)
-        """
-        found = []
-        seen = set()
-        cursor = None
-        for _ in range(max_pages):
-            # Erste Seite ohne geratene Query-Parameter anfordern; nur wenn die
-            # Antwort selbst einen Cursor nennt, wird ueberhaupt paginiert.
-            path = "/v1/models"
-            if cursor:
-                path += f"?paginationToken={urllib.parse.quote(str(cursor))}"
-            res = self._request("GET", path)
-            page = extract_models(res)
-            if not page and not found and not _has_model_list(res):
-                self._log(f"Unexpected /v1/models response: {json.dumps(res)[:300]}")
-            for model_id, name in page:
-                if model_id not in seen:
-                    seen.add(model_id)
-                    found.append((model_id, name))
-            cursor = extract_cursor(res)
-            if not cursor:
-                break
-        self._log(f"Model catalogue: {len(found)} entries")
-        return found
-
     def probe_model(self, model_id):
         """Fragt ein einzelnes Modell ueber GET /v1/models/{id} ab.
 
@@ -305,61 +278,6 @@ class ScenarioClient:
 
 
 # -- Hilfsfunktionen (reine Datenverarbeitung, testbar ohne Netz) --------
-
-def extract_models(res):
-    """Liest (id, name) aus einer /v1/models-Antwort.
-
-    Akzeptiert eine nackte Liste oder ein Objekt mit 'models', 'data' oder
-    'items', weil die genaue Form nicht dokumentiert ist.
-    """
-    if isinstance(res, list):
-        entries = res
-    elif isinstance(res, dict):
-        entries = None
-        for key in ("models", "data", "items", "results"):
-            value = res.get(key)
-            if isinstance(value, list):
-                entries = value
-                break
-        if entries is None:
-            return []
-    else:
-        return []
-
-    found = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        model_id = entry.get("id") or entry.get("modelId") or entry.get("model_id")
-        if not model_id:
-            continue
-        name = entry.get("name") or entry.get("displayName") or entry.get("title") or ""
-        found.append((str(model_id), str(name)))
-    return found
-
-
-def _has_model_list(res):
-    """True, wenn die Antwort eine (auch leere) Modell-Liste enthaelt.
-
-    Eine leere Liste ist eine gueltige Auskunft und keine unerwartete Form.
-    """
-    if isinstance(res, list):
-        return True
-    return isinstance(res, dict) and any(
-        isinstance(res.get(key), list) for key in ("models", "data", "items", "results")
-    )
-
-
-def extract_cursor(res):
-    """Cursor fuer die naechste Seite, falls die Antwort einen mitliefert."""
-    if not isinstance(res, dict):
-        return None
-    for key in ("nextPaginationToken", "paginationToken", "nextCursor", "cursor", "nextPageToken"):
-        value = res.get(key)
-        if value:
-            return value
-    return None
-
 
 def extract_job_id(res):
     job = res.get("job") or {}

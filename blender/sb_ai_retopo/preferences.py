@@ -1,14 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Add-on-Einstellungen: Zugangsdaten, Verbindung und Cache des Modellkatalogs.
+"""Add-on-Einstellungen: Zugangsdaten, Verbindung und Modellpruefung.
 
-Der Katalog wird bewusst nur auf Knopfdruck geholt und dann in den Preferences
-zwischengespeichert. Das Zeichnen eines Panels darf niemals Netzwerkverkehr
-ausloesen, weil Blender staendig neu zeichnet.
+Geprueft wird nur auf Knopfdruck, das Ergebnis liegt danach in den Preferences.
+Das Zeichnen eines Panels darf niemals Netzwerkverkehr ausloesen, weil Blender
+staendig neu zeichnet.
+
+Frueher stand hier ein Abgleich gegen GET /v1/models. Dieser Endpunkt listet
+die selbst trainierten Modelle des Accounts und antwortete mit einer leeren
+Liste, obwohl die Plattform-Modelle nachweislich laufen. Er ist deshalb
+entfernt; geprueft wird jede Modell-ID einzeln.
 """
 
 import json
 import os
-import time
 
 import bpy
 from bpy.props import IntProperty, StringProperty
@@ -48,10 +52,9 @@ class SBAIRetopoPreferences(bpy.types.AddonPreferences):
         max=120,
     )
 
-    # Cache des Modellkatalogs als JSON-Text, damit er die Sitzung ueberlebt
-    catalogue_json: StringProperty(default="", options={"HIDDEN"})
-    catalogue_fetched: StringProperty(default="", options={"HIDDEN"})
-    catalogue_error: StringProperty(default="", options={"HIDDEN"})
+    # Ergebnis der Modellpruefung, damit es die Sitzung ueberlebt
+    probe_error: StringProperty(default="", options={"HIDDEN"})
+    probe_control: StringProperty(default="", options={"HIDDEN"})
     # Ergebnis der gezielten Abfragen: {model_id: [status, erlaeuterung]}
     probe_json: StringProperty(default="", options={"HIDDEN"})
     probe_id: StringProperty(
@@ -91,91 +94,49 @@ class SBAIRetopoPreferences(bpy.types.AddonPreferences):
             sub.operator("sb.ai_retopo_reset_registry", icon="LOOP_BACK")
 
         row = box.row(align=True)
-        row.operator("sb.ai_retopo_refresh_models", icon="FILE_REFRESH")
         row.operator("sb.ai_retopo_reload_registry", icon="FILE_REFRESH")
         row.operator("sb.ai_retopo_export_registry", icon="EXPORT")
 
         probes = self.probes()
+        if self.probe_error:
+            sub = box.box()
+            sub.alert = True
+            sub.label(text="Last model check failed:", icon="ERROR")
+            for line in _wrap(self.probe_error, 70):
+                sub.label(text=line, icon="BLANK1")
+
+        if self.probe_control and self.probe_control != "missing":
+            sub = box.box()
+            sub.alert = True
+            sub.label(text="The check cannot tell models apart", icon="ERROR")
+            sub.label(text="A deliberately invalid id also came back as "
+                           f"'{self.probe_control}',", icon="BLANK1")
+            sub.label(text="so treat every verdict below as meaningless.", icon="BLANK1")
+
         if probes:
             sub = box.box()
-            sub.label(text="Checked directly against the API:", icon="CHECKMARK")
+            sub.label(text="Checked against the API:", icon="CHECKMARK")
             icons = {"available": "CHECKMARK", "missing": "CANCEL", "unknown": "QUESTION"}
+            known = models.known_ids()
             for model_id, (status, note) in sorted(probes.items()):
                 row = sub.row()
                 row.alert = status == "missing"
-                row.label(text=f"{model_id}: {status} ({note})", icon=icons.get(status, "DOT"))
+                suffix = "" if model_id in known else "  not in the registry"
+                row.label(text=f"{model_id}: {status} ({note}){suffix}",
+                          icon=icons.get(status, "DOT"))
+            if any(m not in known for m in probes):
+                sub.label(text="To use one that is not in the registry, add it to the "
+                               "registry file with its parameters.", icon="INFO")
 
         row = box.row(align=True)
         row.prop(self, "probe_id", text="")
         row.operator("sb.ai_retopo_probe_model", icon="VIEWZOOM")
-
-        catalogue = self.catalogue()
-        if self.catalogue_error:
-            sub = box.box()
-            sub.alert = True
-            sub.label(text="Last catalogue refresh failed:", icon="ERROR")
-            for line in _wrap(self.catalogue_error, 70):
-                sub.label(text=line, icon="BLANK1")
-        elif self.catalogue_fetched and not catalogue:
-            sub = box.box()
-            sub.alert = True
-            sub.label(text=f"Refreshed {self.catalogue_fetched}, but no models could be read",
-                      icon="ERROR")
-            sub.label(text="The response did not have the expected shape.", icon="BLANK1")
-            sub.label(text="The system console shows what came back.", icon="BLANK1")
-
-        if catalogue:
-            box.label(text=f"Catalogue: {len(catalogue)} models, checked {self.catalogue_fetched}")
-            found = len(models.known_ids() & {m[0] for m in catalogue})
-            row = box.row()
-            row.alert = found == 0
-            row.label(
-                text=f"Registry models present in the catalogue: {found} of {len(models.MODELS)}",
-                icon="CHECKMARK" if found else "ERROR",
-            )
-            if found == 0:
-                box.label(text="None of them appear, so this list is probably not the right one.",
-                          icon="BLANK1")
-            missing = models.classify({m[0] for m in catalogue})["missing"]
-            if missing:
-                sub = box.box()
-                sub.alert = True
-                sub.label(text="No longer offered by the API:", icon="ERROR")
-                for model_id in missing:
-                    sub.label(text=model_id, icon="BLANK1")
-            unknown = models.unknown_candidates(catalogue)
-            if unknown:
-                sub = box.box()
-                sub.label(text="Retopology models missing from the registry:", icon="INFO")
-                for model_id, name in unknown[:8]:
-                    sub.label(text=f"{model_id}  {name}".strip(), icon="BLANK1")
-                sub.label(text="Add them to the registry file to make them selectable.", icon="BLANK1")
-        elif not self.catalogue_fetched and not self.catalogue_error:
-            box.label(text="Catalogue not fetched yet.", icon="INFO")
 
         user_path = models.user_file_path()
         if user_path:
             box.label(text=f"Registry file: {user_path}")
 
     # -- Cache-Zugriff ---------------------------------------------------
-
-    def catalogue(self):
-        """Zwischengespeicherter Katalog als Liste von (id, name)."""
-        if not self.catalogue_json:
-            return []
-        try:
-            data = json.loads(self.catalogue_json)
-        except (json.JSONDecodeError, TypeError):
-            return []
-        return [(str(e[0]), str(e[1])) for e in data if isinstance(e, (list, tuple)) and e]
-
-    def set_catalogue(self, entries):
-        self.catalogue_json = json.dumps([[i, n] for i, n in entries])
-        self.catalogue_fetched = time.strftime("%Y-%m-%d %H:%M")
-        self.catalogue_error = ""
-
-    def available_ids(self):
-        return {model_id for model_id, _ in self.catalogue()}
 
     def probes(self):
         """Ergebnisse der gezielten Abfragen als {model_id: (status, note)}."""

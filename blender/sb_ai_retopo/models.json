@@ -10,14 +10,7 @@
     "models offering only low/medium/high. file_param, polygon_param and",
     "count_param/level_param are the names this model expects in the request",
     "body. polygon_values maps the panel's quads/tris choice onto whatever",
-    "the model calls it. extra is sent verbatim.",
-    "",
-    "Removed on purpose: model_meshy-remesh. Its parameters were file param",
-    "'model', topology quad/triangle, targetPolycount 100 to 300000 with a",
-    "default of 30000, plus extra resizeHeight 0 and originAt 'empty'. It",
-    "was rejected for this account; the reason was never read off the API",
-    "response, so it may well be usable. Check with 'Refresh Catalogue' and",
-    "paste the entry back if the id shows up."
+    "the model calls it. extra is sent verbatim."
   ],
   "version": 1,
   "models": [
@@ -29,9 +22,35 @@
       "density": "level",
       "file_param": "file3d",
       "polygon_param": "polygonType",
-      "polygon_values": {"quads": "quadrilateral", "tris": "triangle"},
+      "polygon_values": {
+        "quads": "quadrilateral",
+        "tris": "triangle"
+      },
       "level_param": "faceLevel",
-      "extra": {"geometryFileFormat": "obj"}
+      "extra": {
+        "geometryFileFormat": "obj"
+      }
+    },
+    {
+      "key": "meshy_remesh",
+      "id": "model_meshy-remesh",
+      "label": "Meshy Remesh",
+      "description": "Meshy Remesh. Target count from 100 to 300,000 polygons. Never completed a run yet",
+      "density": "count",
+      "file_param": "model",
+      "polygon_param": "topology",
+      "polygon_values": {
+        "quads": "quad",
+        "tris": "triangle"
+      },
+      "count_param": "targetPolycount",
+      "count_min": 100,
+      "count_max": 300000,
+      "count_default": 30000,
+      "extra": {
+        "resizeHeight": 0,
+        "originAt": "empty"
+      }
     },
     {
       "key": "tripo_retopology",
@@ -41,12 +60,17 @@
       "density": "count",
       "file_param": "model",
       "polygon_param": "quad",
-      "polygon_values": {"quads": true, "tris": false},
+      "polygon_values": {
+        "quads": true,
+        "tris": false
+      },
       "count_param": "faceLimit",
       "count_min": 1000,
       "count_max": 20000,
       "count_default": 10000,
-      "extra": {"bake": false}
+      "extra": {
+        "bake": false
+      }
     }
   ]
 }

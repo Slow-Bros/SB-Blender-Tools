@@ -50,12 +50,13 @@ with the same parent and world matrix, smooth shaded, selected and active.
 
 ## Models
 
-Two Scenario models are in the registry. They differ in how the polygon density
+Three Scenario models are in the registry. They differ in how the polygon density
 is controlled, which is why the panel changes with the selected model.
 
 | Model | Model id | Density control | Topology | Result format |
 | --- | --- | --- | --- | --- |
 | Hunyuan PolyGen 1.5 | `model_tencent-smarttopology` | `faceLevel`: low / medium / high only | `polygonType`: `quadrilateral` / `triangle` | OBJ |
+| Meshy Remesh | `model_meshy-remesh` | `targetPolycount`: 100 to 300000 | `topology`: `quad` / `triangle` | untested |
 | Tripo Retopology | `model_tripo-retopology` | `faceLimit`: 1000 to 20000 | `quad`: boolean | FBX |
 
 A target face count is approximate. It is what the model aims for, not a
@@ -75,14 +76,11 @@ the import goes through Blender's FBX importer. An unrecognised format is logged
 with its MIME type, size and first bytes, so a new output format can be
 identified instead of failing as an opaque unknown file.
 
-**Meshy Remesh (`model_meshy-remesh`) was removed** from the registry after a
-call was rejected for our account. The reason was never confirmed against the
-API response, so treat it as unavailable rather than impossible. The model id
-matches the documentation, and *Refresh Catalogue* settles the question at no
-cost: if the id shows up in the catalogue, availability is not the problem and
-the failure was something else. Its
-verified parameters are kept in the comment block at the top of `models.json`
-and can be pasted back if a plan is added later.
+**Meshy Remesh has never completed a run.** It was removed once on the
+assumption that the account lacks a Meshy plan, which was never confirmed
+against an API response. The per-id check reports it, so it is back in the
+registry and can be tried. If a run fails, the API message in the panel finally
+says why.
 
 ## Keeping up with the API
 
@@ -113,23 +111,24 @@ typed in, and stores the verdict: available, missing, or unknown. The panel
 marks a selected model that came back missing, and a run is refused before the
 upload rather than failing after it.
 
+Every check also asks for a control id that cannot exist. If that one does not
+come back missing, the endpoint is not telling models apart and the preferences
+say so, because a check that answers "available" to everything is worse than no
+check at all.
+
 Only a definitive *missing* ever blocks a run. Anything inconclusive, including
 a permission error or a model that was never checked, counts as unknown and
 holds nobody up.
 
-*Refresh Catalogue* fetches the list at `GET /v1/models`. Be aware what that
-list is: on this account it comes back as `{"models": []}` while Hunyuan
-demonstrably runs, so it enumerates the account's own trained models, not the
-platform generation models that `/v1/generate/custom/{id}` addresses. It is
-therefore useless for judging whether a platform model is available, which is
-why the per-id check exists. The preferences say how many registry models
-appear in the catalogue; zero of them is the signal that the list is the wrong
-one.
+There used to be a *Refresh Catalogue* button that fetched the list at
+`GET /v1/models`. It is gone. That endpoint lists the account's own trained
+models, so it answered `{"models": []}` while Hunyuan demonstrably ran, and it
+could never contain the platform models this add-on calls. The per-id check
+replaces it entirely.
 
-Both calls run in a worker thread and only ever start from a button press.
+The check runs in a worker thread and only ever starts from a button press.
 Drawing a panel must not cause network traffic, because Blender redraws
-constantly. Neither response shape is contractually fixed, so both are parsed
-defensively; an empty list counts as a valid answer rather than a surprise.
+constantly.
 
 ## Pipeline
 

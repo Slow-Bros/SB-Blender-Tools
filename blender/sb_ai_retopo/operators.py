@@ -11,7 +11,7 @@ import traceback
 import bpy
 
 from . import mesh_io, models, preferences
-from .scenario_client import Cancelled, ScenarioClient, ScenarioError
+from .scenario_client import CONTROL_MODEL_ID, Cancelled, ScenarioClient, ScenarioError
 
 LOG_PREFIX = "[SB-AI-RETOPO]"
 
@@ -328,83 +328,6 @@ class SB_OT_ai_retopo_cancel(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class SB_OT_refresh_models(bpy.types.Operator):
-    bl_idname = "sb.ai_retopo_refresh_models"
-    bl_label = "Refresh Catalogue"
-    bl_description = "Fetch the model catalogue from the Scenario API and cache it"
-
-    # Der Abruf laeuft im Thread, ein bpy.app.timer holt das Ergebnis ab.
-    # Panels duerfen niemals selbst Netzwerkverkehr ausloesen.
-    _pending = None
-
-    @classmethod
-    def poll(cls, context):
-        return cls._pending is None
-
-    def execute(self, context):
-        api_key, api_secret = preferences.get_credentials(context)
-        if not api_key or not api_secret:
-            self.report({"ERROR"}, "Scenario API key and secret are missing (add-on preferences).")
-            return {"CANCELLED"}
-
-        result = {}
-        cls = SB_OT_refresh_models
-
-        def fetch():
-            try:
-                client = ScenarioClient(api_key, api_secret, log=_log)
-                result["models"] = client.list_models()
-            except ScenarioError as e:
-                result["error"] = str(e)
-            except Exception as e:  # noqa: BLE001
-                _log(traceback.format_exc())
-                result["error"] = f"{type(e).__name__}: {e}"
-
-        thread = threading.Thread(target=fetch, daemon=True, name="sb_ai_retopo_models")
-        thread.start()
-        cls._pending = thread
-
-        def collect():
-            if thread.is_alive():
-                return 0.2
-            cls._pending = None
-            try:
-                prefs = preferences.get_prefs()
-            except Exception:  # noqa: BLE001
-                _log(traceback.format_exc())
-                return None
-
-            if "error" in result:
-                # Auch in der Oberflaeche melden, nicht nur in der Konsole:
-                # ein stiller Knopf ist als Diagnose wertlos
-                prefs.catalogue_error = result["error"]
-                _log(f"Catalogue refresh failed: {result['error']}")
-            else:
-                entries = result.get("models", [])
-                prefs.set_catalogue(entries)
-                missing = models.classify({m[0] for m in entries})["missing"]
-                unknown = models.unknown_candidates(entries)
-                found = len(models.known_ids() & {m[0] for m in entries})
-                _log(
-                    f"Catalogue: {len(entries)} models, {found} of our "
-                    f"{len(models.MODELS)} registry models present, "
-                    f"{len(unknown)} unknown retopology candidates"
-                )
-                if entries and found == 0:
-                    _log(
-                        "None of the registry models appear in this list, so it is "
-                        "probably not the catalogue of usable generation models"
-                    )
-                for model_id, name in unknown:
-                    _log(f"  not in registry: {model_id} {name}".rstrip())
-            _redraw_all()
-            return None
-
-        bpy.app.timers.register(collect, first_interval=0.2)
-        self.report({"INFO"}, "Fetching the model catalogue ...")
-        return {"FINISHED"}
-
-
 def _run_in_thread(work, done):
     """Fuehrt work() im Thread aus und ruft done(result) im Hauptthread auf.
 
@@ -441,7 +364,7 @@ class SB_OT_probe_model(bpy.types.Operator):
     bl_label = "Check"
     bl_description = (
         "Ask the API directly whether this model id exists for your account. "
-        "More reliable than the catalogue, which does not list platform models"
+        "Also checks a control id that cannot exist, to prove the answers mean something"
     )
 
     def execute(self, context):
@@ -455,20 +378,34 @@ class SB_OT_probe_model(bpy.types.Operator):
         extra = prefs.probe_id.strip()
         if extra and extra not in wanted:
             wanted.append(extra)
+        # Kontroll-ID mitfragen: antwortet die API auch darauf mit "vorhanden",
+        # unterscheidet sie nicht und alle anderen Antworten sind wertlos
+        wanted.append(CONTROL_MODEL_ID)
 
         def work():
             client = ScenarioClient(api_key, api_secret, log=_log)
             return {model_id: client.probe_model(model_id) for model_id in wanted}
 
         def done(result):
+            prefs = preferences.get_prefs()
             if "error" in result:
-                preferences.get_prefs().catalogue_error = result["error"]
+                prefs.probe_error = result["error"]
                 _log(f"Model check failed: {result['error']}")
                 return
             found = result["value"]
-            preferences.get_prefs().set_probes(found)
+            prefs.probe_error = ""
+            control = found.pop(CONTROL_MODEL_ID, ("unknown", ""))[0]
+            prefs.probe_control = control
+            prefs.set_probes(found)
             for model_id, (status, note) in found.items():
                 _log(f"Model {model_id}: {status} ({note})")
+            _log(f"Control id answered '{control}'")
+            if control != "missing":
+                _log(
+                    "The control id should not exist but did not come back as "
+                    "missing, so this endpoint does not tell models apart and "
+                    "its verdicts mean nothing"
+                )
 
         _run_in_thread(work, done)
         self.report({"INFO"}, f"Checking {len(wanted)} model id(s) ...")
@@ -556,7 +493,6 @@ def _redraw(context):
 classes = (
     SB_OT_ai_retopo,
     SB_OT_ai_retopo_cancel,
-    SB_OT_refresh_models,
     SB_OT_reload_registry,
     SB_OT_export_registry,
     SB_OT_reset_registry,

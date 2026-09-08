@@ -90,7 +90,7 @@ except ValueError:
 assert models.get("does-not-exist")["key"] == models.default_key()
 assert models.LOADED_FROM == models.BUNDLED_FILE, models.LOADED_FROM
 assert not models.LOAD_ERROR, models.LOAD_ERROR
-assert "model_meshy-remesh" not in models.known_ids(), "Meshy was removed from the registry"
+assert "model_meshy-remesh" in models.known_ids(), "Meshy is back in the registry"
 print(f"[TEST] model registry ok from {models.LOADED_FROM}: {[m['id'] for m in models.MODELS]}")
 
 # --- registry is data: a JSON file drives it, and a broken file cannot brick it
@@ -122,44 +122,7 @@ for broken in ({"models": []},
         pass
 print("[TEST] registry file validation ok")
 
-# --- catalogue parsing must survive the response shape being different
-from sb_ai_retopo.scenario_client import extract_models, extract_cursor  # noqa: E402
-assert extract_models({"models": [{"id": "a", "name": "A"}]}) == [("a", "A")]
-assert extract_models({"data": [{"modelId": "b", "displayName": "B"}]}) == [("b", "B")]
-assert extract_models([{"id": "c"}]) == [("c", "")]
-assert extract_models({"unexpected": 1}) == []
-assert extract_models("nonsense") == []
-assert extract_cursor({"nextPaginationToken": "t"}) == "t"
-assert extract_cursor({"models": []}) is None
-
-# --- comparing the registry against a catalogue
-cat = [(m["id"], m["label"]) for m in models.MODELS]
-assert models.classify({i for i, _ in cat})["missing"] == []
-assert models.classify(set())["missing"] == []          # unknown catalogue accuses nobody
-gone = models.classify({models.MODELS[0]["id"]})["missing"]
-assert gone == [m["id"] for m in models.MODELS[1:]], gone
-unknown = models.unknown_candidates(cat + [("model_acme-retopo", "Acme Retopo"),
-                                           ("model_acme-texture", "Acme Texture")])
-assert unknown == [("model_acme-retopo", "Acme Retopo")], unknown
-
-# --- the refresh must report its outcome, a silent button is no diagnostic
-prefs.catalogue_json = ""
-prefs.catalogue_fetched = ""
-prefs.catalogue_error = ""
-assert prefs.catalogue() == [] and not prefs.catalogue_fetched
-prefs.catalogue_error = "API 403: forbidden"
-assert prefs.catalogue_error, "an error must survive in the preferences"
-prefs.set_catalogue([])                     # fetched, but nothing readable
-assert prefs.catalogue_fetched, "a fetch must be timestamped even when empty"
-assert prefs.catalogue_error == "", "a successful fetch must clear the error"
-assert prefs.catalogue() == []
-prefs.set_catalogue(cat)
-assert len(prefs.catalogue()) == len(cat)
-assert models.known_ids() & prefs.available_ids() == models.known_ids()
-prefs.catalogue_json = ""
-prefs.catalogue_fetched = ""
-
-# --- probe results: only a definitive "missing" may ever block a run
+# --- model check results: only a definitive "missing" may ever block a run
 prefs.probe_json = ""
 assert prefs.probes() == {}
 assert prefs.probe_status("model_anything") == "unknown"
@@ -171,11 +134,10 @@ assert len(prefs.probes()) == 2, prefs.probes()
 prefs.probe_json = "{ broken"
 assert prefs.probes() == {}, "a broken cache must not raise"
 prefs.probe_json = ""
-# an empty model list is a valid answer, not an unexpected shape
-assert _sc._has_model_list({"models": []})
-assert _sc._has_model_list([])
-assert not _sc._has_model_list({"message": "nope"})
-print("[TEST] catalogue parsing + comparison ok")
+# the control id must not look like a real model
+assert _sc.CONTROL_MODEL_ID.startswith("model_")
+assert _sc.CONTROL_MODEL_ID not in models.known_ids()
+print("[TEST] model check bookkeeping ok")
 
 # --- source object: Suzanne, subdivided, transformed, with material/vertex color
 bpy.ops.mesh.primitive_monkey_add()

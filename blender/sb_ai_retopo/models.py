@@ -227,35 +227,3 @@ def build_request(spec, asset_id, polygon_key, *, face_level=None, target_faces=
 
     body.update(spec.get("extra", {}))
     return body
-
-
-# -- Abgleich mit der Modellliste der API ---------------------------------
-
-RETOPO_HINTS = ("retopo", "remesh", "topology", "polygen", "decimat")
-
-
-def classify(available_ids):
-    """Vergleicht die Registry mit den IDs, die der Account wirklich anbietet.
-
-    Returns: dict mit 'missing' (in der Registry, aber nicht mehr angeboten).
-    Bei leerer Liste wird nichts als fehlend gemeldet.
-    """
-    if not available_ids:
-        return {"missing": []}
-    return {"missing": [s["id"] for s in MODELS if s["id"] not in available_ids]}
-
-
-def unknown_candidates(models_from_api):
-    """Modelle der API, die nach Retopologie aussehen und der Registry fehlen.
-
-    models_from_api: Liste von (id, name).
-    """
-    known = known_ids()
-    found = []
-    for model_id, name in models_from_api:
-        if model_id in known:
-            continue
-        haystack = f"{model_id} {name}".lower()
-        if any(hint in haystack for hint in RETOPO_HINTS):
-            found.append((model_id, name))
-    return found
