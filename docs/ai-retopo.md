@@ -34,8 +34,9 @@ module, exactly as `scripts/test_ai_retopo_headless.py` does, or symlink
 
 | Setting | Meaning |
 | --- | --- |
-| Ziel-Polygone | Low / Medium / High — sent as `faceLevel`. See *Polygon density* below. |
-| Polygone | Quads / Triangles — sent as `polygonType` (`quadrilateral` / `triangle`). |
+| KI-Modell | Which retopology model runs the job. See *Models* below. |
+| Ziel-Polygone | A face count for models that accept one, otherwise Low / Medium / High. The panel shows the selected model's allowed range. |
+| Polygone | Quads / Triangles, mapped to whatever the selected model calls it. |
 | Original ausblenden | Hide (not delete) the source object after a successful import. |
 | Pre-Dezimierung | Decimate the upload copy before sending (API limit 200 MB). The original is untouched. |
 
@@ -46,18 +47,38 @@ errors are also printed to the system console with the prefix `[SB-AI-RETOPO]`.
 Result: a new object `<name>_retopo` in the same collection(s) as the source,
 with the same parent and world matrix, smooth shaded, selected and active.
 
-## Polygon density (API limitation)
+## Models
 
-The Scenario / Hunyuan smart-topology endpoint does **not** accept a numeric
-face count. Its only density control is `faceLevel` with the values `low`,
-`medium` and `high` (the same three options as the *Detail* dropdown in
-Phototron), so the panel offers exactly those three and nothing else. The face
-count of the result is whatever the model produces for the chosen level and the
-given input mesh.
+Three Scenario models take an existing mesh and retopologize it. They differ in
+how the polygon density is controlled, which is why the panel changes with the
+selected model. The registry lives in `blender/sb_ai_retopo/models.py`; adding a
+model means adding one entry there.
 
-If an exact face count is needed, decimate the result manually afterwards with
-Blender's Decimate modifier. On a quad result that trades quad topology for
-triangles, which is why it is not part of the add-on.
+| Model | Model id | Density control | Topology |
+| --- | --- | --- | --- |
+| Hunyuan PolyGen 1.5 | `model_tencent-smarttopology` | `faceLevel`: low / medium / high only | `polygonType`: `quadrilateral` / `triangle` |
+| Meshy Remesh | `model_meshy-remesh` | `targetPolycount`: 100 to 300000 | `topology`: `quad` / `triangle` |
+| Tripo Retopology | `model_tripo-retopology` | `faceLimit`: 1000 to 20000 | `quad`: boolean |
+
+A target face count is approximate for every model. It is what the model aims
+for, not a guarantee, so the result can land somewhat above or below. Values
+outside the selected model's range are clamped to the range and the panel says
+so, rather than sending a value the API would reject.
+
+Hunyuan PolyGen has no numeric control at all. Its three levels are the same
+options as the *Detail* dropdown in Phototron, and the resulting face count
+depends on the level and on the input mesh. Pick one of the other two models
+when a specific number matters.
+
+Two model-specific choices are worth knowing. Meshy Remesh is called with
+`resizeHeight: 0` and `originAt: "empty"` so it leaves size and origin of the
+input alone, which keeps the placement simple. Tripo Retopology is called with
+`bake: false` because the upload carries no textures, so baking would have
+nothing to project.
+
+Only the Hunyuan path has run against the live API so far. The other two are
+implemented from the documented schemas and need one real run each to confirm
+their request and response shapes.
 
 ## Pipeline
 
@@ -70,9 +91,9 @@ triangles, which is why it is not part of the add-on.
 2. **Upload** (worker thread): `POST /v1/uploads` (kind `3d`, 5 MB multipart
    parts) → `PUT` parts → `POST /v1/uploads/{id}/action {complete}` → poll until
    the upload is imported and has an asset id.
-3. **Generate**: `POST /v1/generate/custom/model_tencent-smarttopology` with
-   `file3d`, `polygonType`, `faceLevel`, `geometryFileFormat: "obj"` (OBJ keeps
-   quads; GLB would triangulate).
+3. **Generate**: `POST /v1/generate/custom/{model id}` with the body built by
+   `models.build_request` for the selected model, carrying the uploaded asset
+   id, the topology and either a face count or a level.
 4. **Poll** `GET /v1/jobs/{id}` until `success`, then `GET /v1/assets/{id}` and
    download the mesh (OBJ preferred, GLB fallback).
 5. **Import** (main thread): import OBJ (Y-up, matching the glTF convention) or

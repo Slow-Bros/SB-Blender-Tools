@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 
 API_BASE = "https://api.cloud.scenario.com"
-MODEL_ID = "model_tencent-smarttopology"
+# Modelle und ihre Parameter stehen in models.py
 PART_SIZE = 5 * 1024 * 1024
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # Limit der Hunyuan-Modelle
 REQUEST_TIMEOUT = 60
@@ -172,19 +172,16 @@ class ScenarioClient:
 
     # -- Retopologie-Job -------------------------------------------------
 
-    def start_retopology(self, asset_id, polygon_type, face_level):
-        if polygon_type not in POLYGON_TYPES:
-            raise ScenarioError(f"Ungueltiger polygonType: {polygon_type}")
-        if face_level not in FACE_LEVELS:
-            raise ScenarioError(f"Ungueltiges faceLevel: {face_level}")
-        body = {
-            "file3d": asset_id,
-            "polygonType": polygon_type,
-            "faceLevel": face_level,
-            "geometryFileFormat": "obj",  # OBJ behaelt Quads (GLB trianguliert)
-        }
-        self._log(f"Generate: {json.dumps(body)}")
-        res = self._request("POST", f"/v1/generate/custom/{MODEL_ID}", body)
+    def start_generation(self, model_id, body):
+        """Startet einen Job auf /v1/generate/custom/{model_id}.
+
+        Der Body wird von models.build_request erzeugt, weil jedes Modell
+        eigene Parameternamen hat.
+        """
+        if not model_id:
+            raise ScenarioError("Kein Modell angegeben.")
+        self._log(f"Generate {model_id}: {json.dumps(body)}")
+        res = self._request("POST", f"/v1/generate/custom/{model_id}", body)
         job_id = extract_job_id(res)
         if not job_id:
             raise ScenarioError(f"Keine Job-ID in Antwort: {json.dumps(res)[:300]}")

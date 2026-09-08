@@ -3,7 +3,7 @@
 
 import bpy
 
-from . import preferences
+from . import models, preferences
 from .operators import is_running
 
 
@@ -38,8 +38,22 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
         # -- Einstellungen ------------------------------------------------
         col = layout.column(align=True)
         col.enabled = not running
+        col.label(text="KI-Modell")
+        col.prop(settings, "model", text="")
+        col.separator()
+
+        spec = models.get(settings.model)
         col.label(text="Ziel-Polygone")
-        col.prop(settings, "face_level", expand=True)
+        if models.uses_count(spec):
+            col.prop(settings, "target_faces", text="")
+            limited = models.clamp_count(spec, settings.target_faces) != settings.target_faces
+            col.label(
+                text=f"Modell erlaubt {models.count_range_label(spec)}",
+                icon="ERROR" if limited else "NONE",
+            )
+        else:
+            col.prop(settings, "face_level", expand=True)
+            col.label(text="Modell kennt keine Zielzahl, nur Stufen")
         col.separator()
         col.label(text="Polygone")
         col.prop(settings, "polygon_type", expand=True)

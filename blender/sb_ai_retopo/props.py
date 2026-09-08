@@ -4,13 +4,33 @@
 import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
 
+from . import models
+
 
 class SBAIRetopoSettings(bpy.types.PropertyGroup):
+    model: EnumProperty(
+        name="KI-Modell",
+        description="Retopologie-Modell der Scenario API",
+        items=models.enum_items(),
+        default=models.DEFAULT_KEY,
+    )
+    target_faces: IntProperty(
+        name="Ziel-Polygone",
+        description=(
+            "Gewuenschte Anzahl Polygone. Der erlaubte Bereich haengt vom "
+            "Modell ab und wird im Panel angezeigt; Werte ausserhalb werden "
+            "auf den Bereich begrenzt"
+        ),
+        default=10000,
+        min=100,
+        max=300000,
+        step=100,
+    )
     face_level: EnumProperty(
         name="Ziel-Polygone",
         description=(
-            "Polygondichte des Ergebnisses. Entspricht dem faceLevel der "
-            "Scenario API, die nur diese drei Stufen kennt"
+            "Polygondichte des Ergebnisses. Wird von Modellen verwendet, die "
+            "keine Zielzahl kennen, sondern nur diese drei Stufen"
         ),
         items=(
             ("low", "Low", "Starke Reduktion, wenigste Polygone"),
@@ -23,10 +43,10 @@ class SBAIRetopoSettings(bpy.types.PropertyGroup):
         name="Polygone",
         description="Topologie-Typ des Ergebnisses",
         items=(
-            ("quadrilateral", "Quads", "Viereck-Topologie (Ergebnis wird als OBJ geladen, Quads bleiben erhalten)"),
-            ("triangle", "Triangles", "Dreieck-Topologie"),
+            (models.QUADS, "Quads", "Viereck-Topologie (Ergebnis wird als OBJ geladen, Quads bleiben erhalten)"),
+            (models.TRIS, "Triangles", "Dreieck-Topologie"),
         ),
-        default="quadrilateral",
+        default=models.QUADS,
     )
     pre_decimate: BoolProperty(
         name="Pre-Dezimierung",

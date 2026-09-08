@@ -10,7 +10,7 @@ import traceback
 
 import bpy
 
-from . import mesh_io, preferences
+from . import mesh_io, models, preferences
 from .scenario_client import Cancelled, ScenarioClient, ScenarioError
 
 LOG_PREFIX = "[SB-AI-RETOPO]"
@@ -39,7 +39,7 @@ def is_running():
     return _job is not None and _job.thread is not None and _job.thread.is_alive()
 
 
-def _worker(job, api_key, api_secret, glb_path, polygon_type, face_level, poll_interval, job_timeout):
+def _worker(job, api_key, api_secret, glb_path, model_spec, request_body, poll_interval, job_timeout):
     """Laeuft im Thread. Kommuniziert nur ueber job.events, kein bpy."""
     def emit(kind, **data):
         job.events.put((kind, data))
@@ -64,8 +64,10 @@ def _worker(job, api_key, api_secret, glb_path, polygon_type, face_level, poll_i
         )
         log(f"Asset: {asset_id}")
 
-        emit("progress", value=0.22, message="Retopologie-Job wird gestartet ...")
-        job_id = client.start_retopology(asset_id, polygon_type, face_level)
+        emit("progress", value=0.22, message=f"Job wird gestartet ({model_spec['label']}) ...")
+        body = dict(request_body)
+        body[model_spec["file_param"]] = asset_id
+        job_id = client.start_generation(model_spec["id"], body)
         log(f"Job: {job_id}")
 
         def on_poll(count, status, progress):
@@ -119,7 +121,13 @@ class SB_OT_ai_retopo(bpy.types.Operator):
             return {"CANCELLED"}
 
         source = context.active_object
-        face_level = settings.face_level
+        spec = models.get(settings.model)
+        # asset_id wird erst nach dem Upload im Worker eingesetzt
+        request_body = models.build_request(
+            spec, "", settings.polygon_type,
+            face_level=settings.face_level,
+            target_faces=settings.target_faces,
+        )
 
         job = _Job()
         job.temp_dir = tempfile.mkdtemp(prefix="sb_ai_retopo_", dir=bpy.app.tempdir or None)
@@ -144,15 +152,24 @@ class SB_OT_ai_retopo(bpy.types.Operator):
             self.report({"ERROR"}, f"Export fehlgeschlagen: {e}")
             return {"CANCELLED"}
 
+        if models.uses_count(spec):
+            wanted = settings.target_faces
+            actual = models.clamp_count(spec, wanted)
+            density = f"Ziel {actual} Faces"
+            if actual != wanted:
+                density += f" (von {wanted} auf den Bereich des Modells begrenzt)"
+        else:
+            density = f"Stufe {settings.face_level}"
+
         _log(
             f"Export: {info['faces']} Faces roh, {info['faces_clean']} nach Cleanup, "
             f"{info['faces_exported']} hochgeladen, {info['bytes'] / 1024 / 1024:.1f} MB | "
-            f"faceLevel {face_level}, {settings.polygon_type}"
+            f"{spec['label']}, {density}, {settings.polygon_type}"
         )
 
         job.thread = threading.Thread(
             target=_worker,
-            args=(job, api_key, api_secret, glb_path, settings.polygon_type, face_level,
+            args=(job, api_key, api_secret, glb_path, spec, request_body,
                   float(prefs.poll_interval), prefs.job_timeout_minutes * 60.0),
             daemon=True,
             name="sb_ai_retopo",

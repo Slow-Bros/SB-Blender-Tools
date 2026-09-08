@@ -34,11 +34,42 @@ levels = [i.identifier for i in scene.sb_ai_retopo.bl_rna.properties["face_level
 assert levels == ["low", "medium", "high"], levels
 assert scene.sb_ai_retopo.face_level == "medium"
 poly = [i.identifier for i in scene.sb_ai_retopo.bl_rna.properties["polygon_type"].enum_items]
-assert poly == ["quadrilateral", "triangle"], poly
-# Panel values must be exactly what the API accepts, no client-side mapping
-from sb_ai_retopo import scenario_client as _sc  # noqa: E402
-assert set(levels) == set(_sc.FACE_LEVELS) and set(poly) == set(_sc.POLYGON_TYPES)
-print("[TEST] registration + settings ok")
+from sb_ai_retopo import models, scenario_client as _sc  # noqa: E402
+assert poly == [models.QUADS, models.TRIS], poly
+# The level values must be exactly what the level-based API expects
+assert set(levels) == set(_sc.FACE_LEVELS), (levels, _sc.FACE_LEVELS)
+model_keys = [i.identifier for i in scene.sb_ai_retopo.bl_rna.properties["model"].enum_items]
+assert model_keys == [m["key"] for m in models.MODELS], model_keys
+assert scene.sb_ai_retopo.model == models.DEFAULT_KEY
+print(f"[TEST] registration + settings ok, models: {model_keys}")
+
+# --- model registry: every model must build a complete, valid request body
+for spec in models.MODELS:
+    assert spec["id"].startswith("model_"), spec
+    for pk in (models.QUADS, models.TRIS):
+        body = models.build_request(spec, "asset123", pk, face_level="low", target_faces=12345)
+        assert body[spec["file_param"]] == "asset123", body
+        assert body[spec["polygon_param"]] == spec["polygon_values"][pk], body
+        for k, v in spec.get("extra", {}).items():
+            assert body[k] == v, body
+        if models.uses_count(spec):
+            got = body[spec["count_param"]]
+            assert spec["count_min"] <= got <= spec["count_max"], (spec["key"], got)
+            # a value outside the model's range must be clamped, never sent raw
+            low = models.build_request(spec, "a", pk, target_faces=1)
+            high = models.build_request(spec, "a", pk, target_faces=10 ** 9)
+            assert low[spec["count_param"]] == spec["count_min"], low
+            assert high[spec["count_param"]] == spec["count_max"], high
+        else:
+            assert body[spec["level_param"]] == "low", body
+            assert "count_param" not in spec, spec
+try:
+    models.build_request(models.MODELS[0], "a", "bogus")
+    raise AssertionError("unknown polygon key must raise")
+except ValueError:
+    pass
+assert models.get("does-not-exist")["key"] == models.DEFAULT_KEY
+print(f"[TEST] model registry ok: {[m['id'] for m in models.MODELS]}")
 
 # --- source object: Suzanne, subdivided, transformed, with material/vertex color
 bpy.ops.mesh.primitive_monkey_add()
