@@ -19,6 +19,12 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
         obj = context.active_object
         running = is_running()
 
+        if models.LOAD_ERROR:
+            box = layout.box()
+            box.alert = True
+            box.label(text="Model list unusable, using the built-in fallback", icon="ERROR")
+            box.label(text=models.LOAD_ERROR[:60], icon="BLANK1")
+
         api_key, api_secret = preferences.get_credentials(context)
         if not api_key or not api_secret:
             box = layout.box()
@@ -42,9 +48,6 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
         col.prop(settings, "model", text="")
 
         spec = models.get(settings.model)
-        prefs = preferences.get_prefs(context)
-        if prefs.probe_status(spec["id"]) == "missing":
-            col.label(text="This model does not exist for your account", icon="ERROR")
 
         col.separator()
         col.label(text="Target Polygons")

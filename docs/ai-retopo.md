@@ -82,53 +82,35 @@ against an API response. The per-id check reports it, so it is back in the
 registry and can be tried. If a run fails, the API message in the panel finally
 says why.
 
-## Keeping up with the API
+## Changing the model list
 
-The Scenario catalogue changes over time. Two mechanisms keep the add-on usable
-without a code change.
+`blender/sb_ai_retopo/models.json` holds the table above: endpoint id, parameter
+names, ranges and the values each model uses for quads and triangles. Adding a
+model, correcting a range or dropping one that is gone means editing that file
+and restarting Blender, not editing Python.
 
-**The registry is a data file.** `blender/sb_ai_retopo/models.json` holds the
-table above: endpoint id, parameter names, ranges and the values each model uses
-for quads and triangles. Adding a model, correcting a range or dropping one that
-is gone means editing JSON, not Python. *Reload Registry* in the add-on
-preferences reads the file again without restarting Blender.
+There is deliberately no interface around this. An earlier version had buttons
+to refresh a catalogue from the API, check single model ids, export the list for
+editing and reload it at runtime. All of it served hand-editing the file or a
+question that only came up once, so it was removed. Two findings from that
+detour are worth keeping:
 
-Editing the file inside the installed extension works but is lost on the next
-install. *Export Model List* therefore writes a copy to the Blender config
-folder as `sb_ai_retopo_models.json`, and that copy takes precedence over the
-bundled file from then on. A malformed file never blocks the add-on: it falls
-back to the bundled file, then to a single built-in entry, and reports the
-problem in the preferences.
+- `GET /v1/models` lists the account's own trained models, not the platform
+  models that `/v1/generate/custom/{id}` addresses. It answered `{"models": []}`
+  on an account where Hunyuan runs fine, so it cannot be used to check whether a
+  model is available.
+- Exporting the list to the Blender config folder created a copy that silently
+  shadowed the one shipped with the add-on, so an updated model list never took
+  effect. The add-on now reads only its own file. A leftover
+  `sb_ai_retopo_models.json` in the Blender config folder is ignored and can be
+  deleted.
 
-That precedence has a sharp edge worth knowing: once a user copy exists, a model
-list shipped with a newer version of the add-on is ignored. The preferences say
-which file is in use and offer *Reset to Bundled*, which renames the user copy
-to `.bak` rather than deleting it, so hand-made edits are recoverable.
+A broken `models.json` never blocks the add-on: it falls back to a single
+built-in Hunyuan entry, says so in the panel, and logs the reason.
 
-**A model id can be checked against the API.** *Check* next to the model id
-field asks `GET /v1/models/{id}` for every registry model plus whatever id is
-typed in, and stores the verdict: available, missing, or unknown. The panel
-marks a selected model that came back missing, and a run is refused before the
-upload rather than failing after it.
-
-Every check also asks for a control id that cannot exist. If that one does not
-come back missing, the endpoint is not telling models apart and the preferences
-say so, because a check that answers "available" to everything is worse than no
-check at all.
-
-Only a definitive *missing* ever blocks a run. Anything inconclusive, including
-a permission error or a model that was never checked, counts as unknown and
-holds nobody up.
-
-There used to be a *Refresh Catalogue* button that fetched the list at
-`GET /v1/models`. It is gone. That endpoint lists the account's own trained
-models, so it answered `{"models": []}` while Hunyuan demonstrably ran, and it
-could never contain the platform models this add-on calls. The per-id check
-replaces it entirely.
-
-The check runs in a worker thread and only ever starts from a button press.
-Drawing a panel must not cause network traffic, because Blender redraws
-constantly.
+Whether a model actually works for an account is answered by running it. A
+failed job shows the API message verbatim in the panel and the console, which is
+the information that matters when something goes wrong.
 
 ## Pipeline
 

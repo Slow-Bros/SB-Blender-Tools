@@ -11,7 +11,7 @@ import traceback
 import bpy
 
 from . import mesh_io, models, preferences
-from .scenario_client import CONTROL_MODEL_ID, Cancelled, ScenarioClient, ScenarioError
+from .scenario_client import Cancelled, ScenarioClient, ScenarioError
 
 LOG_PREFIX = "[SB-AI-RETOPO]"
 
@@ -122,18 +122,6 @@ class SB_OT_ai_retopo(bpy.types.Operator):
 
         source = context.active_object
         spec = models.get(settings.model)
-
-        # Nur bei einer eindeutigen Absage blockieren. Der Katalog unter
-        # /v1/models fuehrt die Plattform-Modelle nicht, deshalb zaehlt hier
-        # allein die gezielte Abfrage, und "unbekannt" haelt niemanden auf.
-        if prefs.probe_status(spec["id"]) == "missing":
-            msg = (
-                f"'{spec['label']}' ({spec['id']}) does not exist for this account. "
-                "Pick another model, or check the id again in the add-on preferences."
-            )
-            settings.last_error = msg
-            self.report({"ERROR"}, msg)
-            return {"CANCELLED"}
 
         # asset_id wird erst nach dem Upload im Worker eingesetzt
         request_body = models.build_request(
@@ -328,159 +316,6 @@ class SB_OT_ai_retopo_cancel(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def _run_in_thread(work, done):
-    """Fuehrt work() im Thread aus und ruft done(result) im Hauptthread auf.
-
-    Netzwerkaufrufe duerfen den Hauptthread nicht blockieren, und ein Panel
-    darf sie nicht ausloesen. Ein Timer holt das Ergebnis ab.
-    """
-    result = {}
-
-    def run():
-        try:
-            result["value"] = work()
-        except ScenarioError as e:
-            result["error"] = str(e)
-        except Exception as e:  # noqa: BLE001
-            _log(traceback.format_exc())
-            result["error"] = f"{type(e).__name__}: {e}"
-
-    thread = threading.Thread(target=run, daemon=True, name="sb_ai_retopo_net")
-    thread.start()
-
-    def collect():
-        if thread.is_alive():
-            return 0.2
-        done(result)
-        _redraw_all()
-        return None
-
-    bpy.app.timers.register(collect, first_interval=0.2)
-    return thread
-
-
-class SB_OT_probe_model(bpy.types.Operator):
-    bl_idname = "sb.ai_retopo_probe_model"
-    bl_label = "Check"
-    bl_description = (
-        "Ask the API directly whether this model id exists for your account. "
-        "Also checks a control id that cannot exist, to prove the answers mean something"
-    )
-
-    def execute(self, context):
-        api_key, api_secret = preferences.get_credentials(context)
-        if not api_key or not api_secret:
-            self.report({"ERROR"}, "Scenario API key and secret are missing (add-on preferences).")
-            return {"CANCELLED"}
-
-        prefs = preferences.get_prefs(context)
-        wanted = [spec["id"] for spec in models.MODELS]
-        extra = prefs.probe_id.strip()
-        if extra and extra not in wanted:
-            wanted.append(extra)
-        # Kontroll-ID mitfragen: antwortet die API auch darauf mit "vorhanden",
-        # unterscheidet sie nicht und alle anderen Antworten sind wertlos
-        wanted.append(CONTROL_MODEL_ID)
-
-        def work():
-            client = ScenarioClient(api_key, api_secret, log=_log)
-            return {model_id: client.probe_model(model_id) for model_id in wanted}
-
-        def done(result):
-            prefs = preferences.get_prefs()
-            if "error" in result:
-                prefs.probe_error = result["error"]
-                _log(f"Model check failed: {result['error']}")
-                return
-            found = result["value"]
-            prefs.probe_error = ""
-            control = found.pop(CONTROL_MODEL_ID, ("unknown", ""))[0]
-            prefs.probe_control = control
-            prefs.set_probes(found)
-            for model_id, (status, note) in found.items():
-                _log(f"Model {model_id}: {status} ({note})")
-            _log(f"Control id answered '{control}'")
-            if control != "missing":
-                _log(
-                    "The control id should not exist but did not come back as "
-                    "missing, so this endpoint does not tell models apart and "
-                    "its verdicts mean nothing"
-                )
-
-        _run_in_thread(work, done)
-        self.report({"INFO"}, f"Checking {len(wanted)} model id(s) ...")
-        return {"FINISHED"}
-
-
-class SB_OT_reload_registry(bpy.types.Operator):
-    bl_idname = "sb.ai_retopo_reload_registry"
-    bl_label = "Reload Registry"
-    bl_description = "Read the model registry file again, without restarting Blender"
-
-    def execute(self, context):
-        models.load()
-        _redraw_all()
-        if models.LOAD_ERROR:
-            self.report({"WARNING"}, f"Registry: {models.LOAD_ERROR}")
-        else:
-            self.report({"INFO"}, f"Registry: {len(models.MODELS)} models loaded")
-        return {"FINISHED"}
-
-
-class SB_OT_export_registry(bpy.types.Operator):
-    bl_idname = "sb.ai_retopo_export_registry"
-    bl_label = "Export Model List"
-    bl_description = (
-        "Write the model registry to the Blender config folder so it can be "
-        "edited and survives reinstalling the add-on"
-    )
-
-    def execute(self, context):
-        try:
-            path = models.save_user_file()
-        except Exception as e:  # noqa: BLE001
-            self.report({"ERROR"}, f"Could not write the registry: {e}")
-            return {"CANCELLED"}
-        models.load()
-        _redraw_all()
-        self.report({"INFO"}, f"Registry written to {path}")
-        return {"FINISHED"}
-
-
-class SB_OT_reset_registry(bpy.types.Operator):
-    bl_idname = "sb.ai_retopo_reset_registry"
-    bl_label = "Reset to Bundled"
-    bl_description = (
-        "Set the edited user copy of the model registry aside so the list "
-        "shipped with the add-on applies again. The copy is renamed, not deleted"
-    )
-
-    @classmethod
-    def poll(cls, context):
-        return models.user_file_in_use()
-
-    def execute(self, context):
-        try:
-            backup = models.reset_user_file()
-        except OSError as e:
-            self.report({"ERROR"}, f"Could not move the user copy aside: {e}")
-            return {"CANCELLED"}
-        models.load()
-        _redraw_all()
-        if backup:
-            self.report({"INFO"}, f"User copy renamed to {os.path.basename(backup)}")
-        else:
-            self.report({"INFO"}, "There was no user copy")
-        return {"FINISHED"}
-
-
-def _redraw_all():
-    for window in bpy.context.window_manager.windows:
-        for area in window.screen.areas:
-            if area.type in ("VIEW_3D", "PREFERENCES"):
-                area.tag_redraw()
-
-
 def _redraw(context):
     screen = context.screen if context.screen else None
     if screen is None:
@@ -490,14 +325,7 @@ def _redraw(context):
             area.tag_redraw()
 
 
-classes = (
-    SB_OT_ai_retopo,
-    SB_OT_ai_retopo_cancel,
-    SB_OT_reload_registry,
-    SB_OT_export_registry,
-    SB_OT_reset_registry,
-    SB_OT_probe_model,
-)
+classes = (SB_OT_ai_retopo, SB_OT_ai_retopo_cancel)
 
 
 def register():

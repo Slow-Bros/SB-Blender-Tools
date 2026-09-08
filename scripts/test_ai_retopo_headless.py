@@ -36,13 +36,6 @@ assert scene.sb_ai_retopo.face_level == "medium"
 poly = [i.identifier for i in scene.sb_ai_retopo.bl_rna.properties["polygon_type"].enum_items]
 from sb_ai_retopo import models, scenario_client as _sc  # noqa: E402
 
-# A user copy in the Blender config folder takes precedence over the bundled
-# registry. This machine may have one, so force the bundled file to keep the
-# test deterministic; the precedence itself is tested explicitly further down.
-_real_user_file_path = models.user_file_path
-models.user_file_path = lambda: ""
-models.load()
-assert models.LOADED_FROM == models.BUNDLED_FILE, models.LOADED_FROM
 assert poly == [models.QUADS, models.TRIS], poly
 # The level values must be exactly what the level-based API expects
 assert set(levels) == set(_sc.FACE_LEVELS), (levels, _sc.FACE_LEVELS)
@@ -88,7 +81,6 @@ try:
 except ValueError:
     pass
 assert models.get("does-not-exist")["key"] == models.default_key()
-assert models.LOADED_FROM == models.BUNDLED_FILE, models.LOADED_FROM
 assert not models.LOAD_ERROR, models.LOAD_ERROR
 assert "model_meshy-remesh" in models.known_ids(), "Meshy is back in the registry"
 print(f"[TEST] model registry ok from {models.LOADED_FROM}: {[m['id'] for m in models.MODELS]}")
@@ -121,24 +113,6 @@ for broken in ({"models": []},
     except ValueError:
         pass
 print("[TEST] registry file validation ok")
-
-# --- model check results: only a definitive "missing" may ever block a run
-prefs.probe_json = ""
-assert prefs.probes() == {}
-assert prefs.probe_status("model_anything") == "unknown"
-prefs.set_probes({"model_a": ("available", "reachable")})
-prefs.set_probes({"model_b": ("missing", "not found for this account")})
-assert prefs.probe_status("model_a") == "available"
-assert prefs.probe_status("model_b") == "missing"
-assert len(prefs.probes()) == 2, prefs.probes()
-prefs.probe_json = "{ broken"
-assert prefs.probes() == {}, "a broken cache must not raise"
-prefs.probe_json = ""
-# the control id must not look like a real model
-assert _sc.CONTROL_MODEL_ID.startswith("model_")
-assert _sc.CONTROL_MODEL_ID not in models.known_ids()
-print("[TEST] model check bookkeeping ok")
-
 # --- source object: Suzanne, subdivided, transformed, with material/vertex color
 bpy.ops.mesh.primitive_monkey_add()
 src = ctx.active_object
@@ -533,71 +507,6 @@ except RuntimeError as e:
 assert res == {"CANCELLED"}, res
 assert not scene.sb_ai_retopo.running
 print("[TEST] operator credential guard ok")
-
-# --- a model the catalogue no longer offers must be refused before uploading
-prefs.api_key = "dummy-key"
-prefs.api_secret = "dummy-secret"
-prefs.set_probes({models.MODELS[0]["id"]: ("missing", "not found for this account")})
-assert prefs.probe_status(models.MODELS[0]["id"]) == "missing"
-for o in bpy.data.objects:
-    o.select_set(False)
-bpy.ops.mesh.primitive_cube_add()
-guard_obj = ctx.active_object
-try:
-    res = bpy.ops.sb.ai_retopo()
-except RuntimeError as e:
-    assert "does not exist for this account" in str(e), e
-    res = {"CANCELLED"}
-assert res == {"CANCELLED"}, res
-assert "does not exist" in scene.sb_ai_retopo.last_error, scene.sb_ai_retopo.last_error
-assert not scene.sb_ai_retopo.running
-# an inconclusive check must never block a run
-prefs.probe_json = ""
-assert prefs.probe_status(models.MODELS[0]["id"]) == "unknown"
-prefs.set_probes({models.MODELS[0]["id"]: ("unknown", "no permission to query this model")})
-assert prefs.probe_status(models.MODELS[0]["id"]) == "unknown"
-prefs.probe_json = ""
-bpy.data.objects.remove(guard_obj, do_unlink=True)
-prefs.api_key = ""
-prefs.api_secret = ""
-print("[TEST] unavailable-model guard ok")
-
-# --- the registry can be exported and reloaded at runtime
-exported = models.save_user_file(os.path.join(reg_tmp, "user_copy.json"))
-assert os.path.exists(exported)
-before_reload = [m["key"] for m in models.MODELS]
-models.load()
-assert [m["key"] for m in models.MODELS] == before_reload
-print("[TEST] registry export + reload ok")
-
-# --- a user copy shadows the bundled registry, and can be reset again
-shadow = os.path.join(reg_tmp, "shadow.json")
-with open(shadow, "w", encoding="utf-8") as f:
-    _json.dump({"models": [{
-        "key": "only_one", "id": "model_only-one", "label": "Only One",
-        "density": "level", "file_param": "file3d", "polygon_param": "polygonType",
-        "polygon_values": {"quads": "quadrilateral", "tris": "triangle"},
-    }]}, f)
-models.user_file_path = lambda: shadow
-models.load()
-assert [m["key"] for m in models.MODELS] == ["only_one"], models.MODELS
-assert models.LOADED_FROM == shadow, models.LOADED_FROM
-backup = models.reset_user_file()
-assert backup and os.path.exists(backup) and not os.path.exists(shadow)
-models.load()
-assert models.LOADED_FROM == models.BUNDLED_FILE, models.LOADED_FROM
-assert models.reset_user_file() is None, "resetting twice must be a no-op"
-# a broken user copy must fall back instead of breaking the add-on
-with open(shadow, "w", encoding="utf-8") as f:
-    f.write("{ not json")
-models.load()
-assert models.LOADED_FROM == models.BUNDLED_FILE, models.LOADED_FROM
-assert models.LOAD_ERROR, "a broken user copy must be reported"
-os.remove(shadow)
-models.user_file_path = _real_user_file_path
-models.load()
-print("[TEST] user copy precedence + reset ok")
-
 addon_utils.disable("sb_ai_retopo", default_set=True)
 assert "sb_ai_retopo" not in bpy.types.Scene.bl_rna.properties
 print("[TEST] ALL OK")

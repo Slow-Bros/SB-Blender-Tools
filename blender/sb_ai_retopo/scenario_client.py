@@ -27,10 +27,6 @@ MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # Limit der Hunyuan-Modelle
 REQUEST_TIMEOUT = 60
 
 POLYGON_TYPES = ("quadrilateral", "triangle")
-
-# Kontroll-ID fuer die Modellpruefung. Antwortet die API auch hierauf mit
-# "vorhanden", unterscheidet sie nicht und ihre Auskunft ist wertlos.
-CONTROL_MODEL_ID = "model_sb-control-this-cannot-exist"
 FACE_LEVELS = ("low", "medium", "high")
 
 MIME_TO_EXT = {
@@ -180,32 +176,6 @@ class ScenarioClient:
             if status in ("failed", "error"):
                 raise ScenarioError(f"Upload validation failed: {json.dumps(upload)[:300]}")
         raise ScenarioError("Upload import timed out after 5 minutes.")
-
-    # -- Modellkatalog ---------------------------------------------------
-
-    def probe_model(self, model_id):
-        """Fragt ein einzelnes Modell ueber GET /v1/models/{id} ab.
-
-        Die Liste unter /v1/models enthaelt die Plattform-Modelle nicht, sie
-        antwortet fuer Accounts ohne eigene Modelle mit einer leeren Liste.
-        Eine gezielte Abfrage ist deshalb die verlaesslichere Auskunft.
-
-        Returns: ("available" | "missing" | "unknown", Erlaeuterung)
-        """
-        try:
-            res = self._request("GET", f"/v1/models/{urllib.parse.quote(model_id)}")
-        except Cancelled:
-            raise
-        except ScenarioError as e:
-            message = str(e)
-            if " 404" in message:
-                return "missing", "not found for this account"
-            if " 401" in message or " 403" in message:
-                return "unknown", "no permission to query this model"
-            return "unknown", message
-        if isinstance(res, dict) and (res.get("model") or res.get("id")):
-            return "available", "reachable"
-        return "unknown", "the response did not describe a model"
 
     # -- Retopologie-Job -------------------------------------------------
 

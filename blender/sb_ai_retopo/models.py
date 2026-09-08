@@ -2,9 +2,7 @@
 """Registry der Retopologie-Modelle der Scenario API.
 
 Die Tabelle steht in models.json neben diesem Modul, damit ein Modell ohne
-Code-Aenderung ergaenzt oder korrigiert werden kann. Eine Benutzerkopie unter
-<Blender-Config>/sb_ai_retopo_models.json hat Vorrang und ueberlebt das
-Neuinstallieren des Add-ons.
+Code-Aenderung ergaenzt oder korrigiert werden kann.
 
 Jedes Modell hat eigene Parameternamen und eine eigene Art, die Polygondichte
 zu steuern. Zwei Modelle nehmen eine echte Zielzahl entgegen, eines kennt nur
@@ -25,7 +23,6 @@ QUADS = "quads"
 TRIS = "tris"
 
 BUNDLED_FILE = os.path.join(os.path.dirname(__file__), "models.json")
-USER_FILE_NAME = "sb_ai_retopo_models.json"
 
 REQUIRED_KEYS = ("key", "id", "label", "density", "file_param",
                  "polygon_param", "polygon_values")
@@ -50,16 +47,6 @@ FALLBACK_MODELS = [
 MODELS = []
 LOAD_ERROR = ""
 LOADED_FROM = ""
-
-
-def user_file_path():
-    """Pfad der Benutzerkopie im Blender-Konfigurationsordner."""
-    try:
-        import bpy
-        base = bpy.utils.user_resource("CONFIG")
-    except Exception:
-        return ""
-    return os.path.join(base, USER_FILE_NAME) if base else ""
 
 
 def _validate(entry):
@@ -109,59 +96,19 @@ def _read(path):
 
 
 def load():
-    """Laedt die Registry: Benutzerkopie vor mitgelieferter Datei vor Notnagel."""
+    """Laedt die Registry aus models.json, mit eingebautem Notnagel."""
     global MODELS, LOAD_ERROR, LOADED_FROM
-    errors = []
-    for label, path in (("user file", user_file_path()), ("bundled file", BUNDLED_FILE)):
-        if not path or not os.path.exists(path):
-            continue
-        try:
-            MODELS = _read(path)
-            LOAD_ERROR = "; ".join(errors)
-            LOADED_FROM = path
-            return MODELS
-        except Exception as e:  # noqa: BLE001 - ein kaputtes File darf nichts blockieren
-            errors.append(f"{label}: {e}")
-
-    MODELS = [dict(m) for m in FALLBACK_MODELS]
-    LOADED_FROM = "built-in fallback"
-    LOAD_ERROR = "; ".join(errors) or "models.json not found"
-    return MODELS
-
-
-def save_user_file(path=None):
-    """Schreibt die aktuelle Registry als Benutzerkopie zum Bearbeiten."""
-    path = path or user_file_path()
-    if not path:
-        raise RuntimeError("Blender config directory is not available")
-    payload = {"version": 1, "models": MODELS}
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
-    return path
-
-
-def user_file_in_use():
-    """True, wenn gerade die Benutzerkopie und nicht die mitgelieferte Datei gilt."""
-    path = user_file_path()
-    return bool(path) and LOADED_FROM == path
-
-
-def reset_user_file():
-    """Benennt die Benutzerkopie um, damit wieder die mitgelieferte Datei gilt.
-
-    Bewusst kein Loeschen: die Datei kann von Hand bearbeitet worden sein.
-
-    Returns: Pfad der Sicherung, oder None wenn es keine Benutzerkopie gab.
-    """
-    path = user_file_path()
-    if not path or not os.path.exists(path):
-        return None
-    backup = path + ".bak"
-    if os.path.exists(backup):
-        os.remove(backup)
-    os.replace(path, backup)
-    return backup
+    try:
+        MODELS = _read(BUNDLED_FILE)
+        LOAD_ERROR = ""
+        LOADED_FROM = BUNDLED_FILE
+        return MODELS
+    except Exception as e:  # noqa: BLE001 - eine kaputte Datei darf nichts blockieren
+        MODELS = [dict(m) for m in FALLBACK_MODELS]
+        LOADED_FROM = "built-in fallback"
+        LOAD_ERROR = str(e)
+        print(f"[SB-AI-RETOPO] Model registry unusable, falling back: {e}")
+        return MODELS
 
 
 load()
