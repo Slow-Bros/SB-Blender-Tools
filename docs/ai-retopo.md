@@ -61,9 +61,12 @@ triangles, which is why it is not part of the add-on.
 
 ## Pipeline
 
-1. **Export** (main thread): evaluated copy of the active object (modifiers
-   applied, materials / colour attributes / UVs stripped, object transform reset
-   to identity) → temporary GLB.
+1. **Export** (main thread): evaluated copy of the active object, modifiers
+   applied, materials, colour attributes and UVs stripped, object transform
+   reset to identity. The copy then gets the same cleanup Phototron runs in
+   `convertObjToGlb`: merge duplicate vertices at 0.0001, delete loose geometry
+   that has no faces, recalculate normals outwards. Optional pre-decimation runs
+   after that, and the result is written to a temporary GLB.
 2. **Upload** (worker thread): `POST /v1/uploads` (kind `3d`, 5 MB multipart
    parts) → `PUT` parts → `POST /v1/uploads/{id}/action {complete}` → poll until
    the upload is imported and has an asset id.
@@ -73,13 +76,38 @@ triangles, which is why it is not part of the add-on.
 4. **Poll** `GET /v1/jobs/{id}` until `success`, then `GET /v1/assets/{id}` and
    download the mesh (OBJ preferred, GLB fallback).
 5. **Import** (main thread): import OBJ (Y-up, matching the glTF convention) or
-   GLB, merge into one mesh object, fit its bounding box onto the source's local
-   bounding box (uniform scale + translation — Hunyuan may normalise the mesh),
-   apply smooth shading, optional exact-count decimation, then assign the
-   source's collections, parent and world matrix.
+   GLB, merge into one mesh object, run the bounding-box safety net described
+   below, apply smooth shading, then assign the source's collections, parent and
+   world matrix.
 
 The worker thread never touches `bpy`; it communicates via a queue that a modal
 operator drains on a timer.
+
+## Bounding-box safety net
+
+Hunyuan may return the mesh normalised in scale and position, so the import
+compares the result against the source and corrects it if needed. The rules
+follow `bakeTexturesBlender` in Phototron:
+
+- The comparison uses the **diagonal** of the bounding box, not the longest
+  single axis. The diagonal stays meaningful when proportions shift slightly and
+  a different axis becomes the longest one.
+- A size difference is only corrected above **one percent**, a position offset
+  only above one percent of the source diagonal. A result that already sits
+  correctly is left untouched.
+- The measurement **ignores stray fragments**. The model sometimes produces a
+  few faces outside the object; measured over all vertices they inflate the box
+  and throw off both scale and position. Separate parts are therefore excluded
+  when they stick out of the main part's box by more than ten percent of its
+  diagonal. Parts inside that box stay in, so an object that legitimately
+  consists of several pieces is measured in full. If the excluded parts would
+  hold more than ten percent of the vertices, nothing is excluded, because that
+  is no longer a fragment.
+
+Every run prints the measured diagonals, the resulting factor, the offset and
+the number of separate parts to the system console. When fragments are found,
+the panel also shows a warning: they are ignored for the fit but stay in the
+mesh, so check and delete them yourself.
 
 ## Test
 
@@ -87,7 +115,8 @@ operator drains on a timer.
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --python scripts\test_ai_retopo_headless.py
 ```
 
-The test needs no network access. It covers registration, export, a simulated
-(normalised) result round trip with placement check, decimation and the API
+The test needs no network access. It covers registration, export with the
+pre-upload cleanup, pre-decimation, the fit tolerances, a simulated result round
+trip with a placement check, a result carrying a stray fragment, and the API
 response parsers. The live API path is exercised manually in Blender with real
 credentials.

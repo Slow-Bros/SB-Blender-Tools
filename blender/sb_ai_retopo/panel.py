@@ -63,6 +63,10 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
 
         if settings.last_result:
             layout.label(text=settings.last_result, icon="CHECKMARK")
+        if settings.last_warning:
+            box = layout.box()
+            for i, line in enumerate(_wrap(settings.last_warning, 42)):
+                box.label(text=line, icon="ERROR" if i == 0 else "BLANK1")
         if settings.last_error:
             box = layout.box()
             box.alert = True

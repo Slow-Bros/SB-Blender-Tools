@@ -52,6 +52,7 @@ class SBAIRetopoSettings(bpy.types.PropertyGroup):
     progress: FloatProperty(default=0.0, min=0.0, max=1.0, subtype="FACTOR", options={"SKIP_SAVE"})
     status: StringProperty(default="", options={"SKIP_SAVE"})
     last_result: StringProperty(default="", options={"SKIP_SAVE"})
+    last_warning: StringProperty(default="", options={"SKIP_SAVE"})
     last_error: StringProperty(default="", options={"SKIP_SAVE"})
 
 

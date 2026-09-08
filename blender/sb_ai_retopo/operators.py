@@ -131,6 +131,7 @@ class SB_OT_ai_retopo(bpy.types.Operator):
         settings.status = "Mesh wird exportiert ..."
         settings.last_error = ""
         settings.last_result = ""
+        settings.last_warning = ""
 
         try:
             decimate = settings.pre_decimate_target if settings.pre_decimate else 0
@@ -144,8 +145,9 @@ class SB_OT_ai_retopo(bpy.types.Operator):
             return {"CANCELLED"}
 
         _log(
-            f"Export: {info['faces']} Faces -> {info['faces_exported']} Faces, "
-            f"{info['bytes'] / 1024 / 1024:.1f} MB | faceLevel {face_level}, {settings.polygon_type}"
+            f"Export: {info['faces']} Faces roh, {info['faces_clean']} nach Cleanup, "
+            f"{info['faces_exported']} hochgeladen, {info['bytes'] / 1024 / 1024:.1f} MB | "
+            f"faceLevel {face_level}, {settings.polygon_type}"
         )
 
         job.thread = threading.Thread(
@@ -224,12 +226,23 @@ class SB_OT_ai_retopo(bpy.types.Operator):
             self.report({"ERROR"}, settings.last_error)
             return self._finish(context)
 
-        summary = f"{obj.name}: {stats['faces']} Faces ({stats['quads']} Quads, {stats['tris']} Tris"
+        summary = f"{obj.name}: {stats['faces']} Faces, {stats['quads']} Quads, {stats['tris']} Tris"
         if stats["ngons"]:
             summary += f", {stats['ngons']} N-Gons"
-        summary += ")"
         settings.last_result = summary
-        _log(summary + (" | auf Original eingepasst" if stats["fitted"] else ""))
+        _log(summary)
+
+        if stats["outlier_parts"]:
+            warning = (
+                f"KI-Ergebnis hat {stats['outlier_parts']} Fragment(e) ausserhalb des Objekts. "
+                "Bei der Einpassung ignoriert, im Mesh pruefen und ggf. loeschen."
+            )
+            settings.last_warning = warning
+            _log(warning)
+            self.report({"WARNING"}, warning)
+        else:
+            settings.last_warning = ""
+
         self.report({"INFO"}, f"KI-Retopologie fertig: {summary}")
         return self._finish(context, success=True)
 

@@ -3,14 +3,16 @@
 
 Run:  blender -b --python scripts/test_ai_retopo_headless.py
 
-Covers: registration, GLB export of a transformed object, import of a
-simulated (normalized) result, bounding-box fit + placement on the original,
-exact-count decimation, and the pure-python API response parsers.
+Covers: registration, pre-upload cleanup, GLB export of a transformed object,
+import of a simulated (normalized) result, the bounding-box safety net with its
+one percent tolerance, stray fragments being ignored during measurement,
+placement on the original, and the pure-python API response parsers.
 """
 import os
 import sys
 import tempfile
 
+import bmesh
 import bpy
 from mathutils import Euler, Matrix, Vector
 
@@ -69,6 +71,38 @@ info2 = mesh_io.export_object_for_upload(ctx, src, glb2, decimate_target=500)
 assert os.path.getsize(glb2) < os.path.getsize(glb), "pre-decimate did not shrink file"
 print(f"[TEST] pre-decimate export ok: {info2}")
 
+# --- cleanup before upload (duplicate + loose vertices), as Phototron does
+bpy.ops.mesh.primitive_cube_add(location=(0, 0, 0))
+dirty = ctx.active_object
+dirty.name = "Dirty"
+bm = bmesh.new()
+bm.from_mesh(dirty.data)
+bm.verts.ensure_lookup_table()
+bm.verts.new(bm.verts[0].co)      # duplicate on top of an existing vertex
+bm.verts.new(Vector((5, 5, 5)))   # loose vertex far away
+bm.to_mesh(dirty.data)
+bm.free()
+assert len(dirty.data.vertices) == 10
+glb3 = os.path.join(tmp, "dirty.glb")
+info3 = mesh_io.export_object_for_upload(ctx, dirty, glb3)
+assert info3["cleanup"]["verts_removed"] == 1, info3
+assert info3["cleanup"]["loose_removed"] == 1, info3
+assert info3["faces"] == info3["faces_clean"] == 6, info3
+assert len(dirty.data.vertices) == 10, "cleanup must not touch the source object"
+bpy.data.objects.remove(dirty, do_unlink=True)
+print(f"[TEST] pre-upload cleanup ok: {info3['cleanup']}")
+
+# --- fit_matrix: diagonal comparison with a one percent tolerance
+lo, hi = Vector((0, 0, 0)), Vector((2, 1, 1))
+m, i = mesh_io.fit_matrix(lo, hi, lo, hi)
+assert m is None and not i["scaled"] and not i["moved"], i
+m, i = mesh_io.fit_matrix(lo, hi, lo, hi * 0.995)  # 0.5 % off, inside tolerance
+assert m is None, i
+m, i = mesh_io.fit_matrix(lo, hi, lo, hi * 0.5)    # 100 % off, must be corrected
+assert m is not None and i["scaled"] and i["moved"], i
+assert (m @ lo - lo).length < 1e-6 and (m @ (hi * 0.5) - hi).length < 1e-6
+print("[TEST] fit_matrix tolerance ok")
+
 # --- simulate API result: re-import our own GLB, normalize to unit cube (as
 # Hunyuan may do), export as Y-up OBJ, then run the import/placement path.
 before = set(bpy.data.objects)
@@ -107,7 +141,10 @@ slo, shi = world_bbox(src)
 nlo, nhi = world_bbox(new)
 err = max((slo - nlo).length, (shi - nhi).length)
 assert err < 1e-3, f"placement mismatch: {err}"
-print(f"[TEST] import + placement ok: {stats}, bbox error {err:.2e}")
+# Suzanne is legitimately 3 parts (head + two eyes) that sit inside the head's
+# box, so nothing may be treated as an outlier here
+assert stats["parts"] == 3 and stats["outlier_parts"] == 0 and not stats["filtered"], stats
+print(f"[TEST] import + placement ok, bbox error {err:.2e}, parts {stats['parts']}")
 
 # Second import with an explicit name, source hidden afterwards
 new2, stats2 = mesh_io.import_result(ctx, obj_path, src, name="Scan_retopo_2", hide_source=True)
@@ -115,6 +152,109 @@ assert new2.name == "Scan_retopo_2", new2.name
 assert src.hide_get() and "Scan" in bpy.data.objects, "source must be hidden, not deleted"
 src.hide_set(False)
 print(f"[TEST] named import + hide source ok: {stats2}")
+
+# --- result with a stray island far outside the object: the placement must be
+# measured on the main part only, otherwise scale and position are corrupted
+before = set(bpy.data.objects)
+bpy.ops.wm.obj_import(filepath=obj_path)
+main_part = [o for o in bpy.data.objects if o not in before and o.type == "MESH"][0]
+bpy.ops.mesh.primitive_cube_add(size=0.05, location=(0.0, 0.0, 3.0))
+stray = ctx.active_object
+for o in bpy.data.objects:
+    o.select_set(o in (main_part, stray))
+stray_path = os.path.join(tmp, "retopo_stray.obj")
+bpy.ops.wm.obj_export(filepath=stray_path, export_selected_objects=True, export_materials=False)
+for o in (main_part, stray):
+    bpy.data.objects.remove(o, do_unlink=True)
+
+new3, stats3 = mesh_io.import_result(ctx, stray_path, src, name="Scan_retopo_stray")
+ctx.view_layer.update()
+# Suzanne itself is 3 parts (head + two eyes), the stray cube is the 4th.
+# Only the cube sticks out of the head's box, so only it may be excluded.
+assert stats3["parts"] == 4, stats3
+assert stats3["outlier_parts"] == 1 and stats3["filtered"], stats3
+mlo, mhi, _ = mesh_io.bbox_without_outliers(new3.data)
+pts = [new3.matrix_world @ Vector((x, y, z))
+       for x in (mlo.x, mhi.x) for y in (mlo.y, mhi.y) for z in (mlo.z, mhi.z)]
+mlo_w = Vector([min(p[i] for p in pts) for i in range(3)])
+mhi_w = Vector([max(p[i] for p in pts) for i in range(3)])
+err3 = max((slo - mlo_w).length, (shi - mhi_w).length)
+assert err3 < 1e-3, f"stray island corrupted the placement: {err3}"
+print(f"[TEST] stray island ignored, placement ok: bbox error {err3:.2e}")
+
+# --- cleanup_mesh: merge doubles, drop loose vertices (parity with Phototron)
+cm = bpy.data.meshes.new("cleanup_test")
+cm.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 0), (5, 5, 5)], [], [(0, 1, 2)])
+cm.update()
+cleanup = mesh_io.cleanup_mesh(cm)
+assert len(cm.vertices) == 3 and len(cm.polygons) == 1, (len(cm.vertices), len(cm.polygons))
+assert cleanup["verts_removed"] == 1 and cleanup["loose_removed"] == 1, cleanup
+bpy.data.meshes.remove(cm)
+print(f"[TEST] cleanup_mesh ok: {cleanup}")
+
+# --- fit_matrix: Phototron's one percent tolerance, measured on the diagonal
+lo0, hi0 = Vector((-1, -1, -1)), Vector((1, 1, 1))
+m, fi = mesh_io.fit_matrix(lo0, hi0, lo0, hi0)
+assert m is None and not fi["scaled"] and not fi["moved"], fi
+m, fi = mesh_io.fit_matrix(lo0, hi0, lo0 * 0.995, hi0 * 0.995)
+assert m is None, f"0.5 percent must stay untouched: {fi}"
+m, fi = mesh_io.fit_matrix(lo0, hi0, lo0 * 0.95, hi0 * 0.95)
+assert m is not None and fi["scaled"], f"5 percent must be corrected: {fi}"
+m, fi = mesh_io.fit_matrix(lo0, hi0, lo0 + Vector((0.5, 0, 0)), hi0 + Vector((0.5, 0, 0)))
+assert m is not None and fi["moved"] and not fi["scaled"], fi
+print("[TEST] fit_matrix tolerances ok")
+
+# --- bbox_without_outliers: a few stray faces must not inflate the measurement
+bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=16, location=(0, 0, 0))
+sphere = ctx.active_object
+bpy.ops.mesh.primitive_cube_add(size=0.05, location=(10, 0, 0))
+fragment = ctx.active_object
+with ctx.temp_override(object=sphere, active_object=sphere, selected_objects=[sphere, fragment],
+                       selected_editable_objects=[sphere, fragment]):
+    bpy.ops.object.join()
+full_lo, full_hi = mesh_io._mesh_bbox(sphere.data)
+main_lo, main_hi, pinfo = mesh_io.bbox_without_outliers(sphere.data)
+assert pinfo["parts"] == 2 and pinfo["filtered"], pinfo
+assert (full_hi - full_lo).length > 9.0, "full bbox should be inflated by the fragment"
+assert (main_hi - main_lo).length < 3.6, (main_lo, main_hi)
+print(f"[TEST] bbox_without_outliers ok: {pinfo}")
+
+# --- regression: a result with stray faces must still land on the original
+#     (this is the Medium failure Amalia hit in Blender)
+bpy.ops.object.select_all(action="DESELECT")
+sphere.select_set(True)
+ctx.view_layer.objects.active = sphere
+stray_path = os.path.join(tmp, "retopo_stray.obj")
+sm = sphere.data
+s_lo, s_hi = mesh_io.bbox_without_outliers(sm)[:2]
+s_center = (s_lo + s_hi) * 0.5
+sm.transform(Matrix.Scale(1.0 / max(s_hi - s_lo), 4) @ Matrix.Translation(-s_center))
+bpy.ops.wm.obj_export(filepath=stray_path, export_selected_objects=True, export_materials=False)
+
+bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=16)
+src2 = ctx.active_object
+src2.name = "Ball"
+src2.location = Vector((-4.0, 1.0, 2.0))
+src2.rotation_euler = Euler((0.2, 1.3, 0.5))
+src2.scale = Vector((3.0, 3.0, 3.0))
+ctx.view_layer.update()
+
+fixed, fstats = mesh_io.import_result(ctx, stray_path, src2, name="Ball_retopo")
+ctx.view_layer.update()
+assert fstats["parts"] == 2 and fstats["filtered"], fstats
+b_lo, b_hi = world_bbox(src2)
+f_lo, f_hi = mesh_io.bbox_without_outliers(fixed.data)[:2]
+f_pts = [fixed.matrix_world @ Vector((x, y, z))
+         for x in (f_lo.x, f_hi.x) for y in (f_lo.y, f_hi.y) for z in (f_lo.z, f_hi.z)]
+fw_lo = Vector([min(p[i] for p in f_pts) for i in range(3)])
+fw_hi = Vector([max(p[i] for p in f_pts) for i in range(3)])
+stray_err = max((b_lo - fw_lo).length, (b_hi - fw_hi).length)
+assert stray_err < 1e-3, f"stray faces threw off the placement: {stray_err}"
+print(f"[TEST] stray-fragment placement ok: error {stray_err:.2e}")
+
+bpy.data.objects.remove(fixed, do_unlink=True)
+bpy.data.objects.remove(src2, do_unlink=True)
+bpy.data.objects.remove(sphere, do_unlink=True)
 
 # Pure-python API parsers
 assert scenario_client.extract_job_id({"job": {"jobId": "j1"}}) == "j1"
@@ -135,7 +275,11 @@ except scenario_client.ScenarioError:
     pass
 print("[TEST] client parsers ok")
 
-# Operator poll / credentials guard
+# Operator poll / credentials guard. Earlier blocks deleted their objects, so
+# make the source mesh active again first.
+bpy.ops.object.select_all(action="DESELECT")
+src.select_set(True)
+ctx.view_layer.objects.active = src
 assert bpy.ops.sb.ai_retopo.poll(), "operator should be available for active mesh in object mode"
 prefs.api_key = ""
 prefs.api_secret = ""
