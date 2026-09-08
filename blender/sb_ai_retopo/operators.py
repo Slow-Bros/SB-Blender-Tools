@@ -250,7 +250,6 @@ class SB_OT_ai_retopo(bpy.types.Operator):
                 context, job.result_path, source,
                 hide_source=settings.hide_source,
                 remove_fragments=settings.remove_fragments,
-                fit_to_original=settings.fit_to_original,
             )
         except Exception as e:  # noqa: BLE001
             _log(traceback.format_exc())
@@ -275,11 +274,12 @@ class SB_OT_ai_retopo(bpy.types.Operator):
                 f"The result has {stats['outlier_parts']} fragment(s) outside the object, "
                 "kept because removal is switched off."
             )
-        if stats["deviates"]:
+        if not stats["world_ok"]:
             notes.append(
-                f"Size differs by factor {stats['scale']:.3f} and the centre by "
-                f"{stats['offset']:.3f} from the original. Left as returned; "
-                "switch on 'Fit to Original' if the object really sits wrong."
+                f"After correction the result is still off: size by "
+                f"{stats['world_residual'] * 100:.1f}%, centre by "
+                f"{stats['world_centre_offset']:.3f}. The system console has the "
+                "measured sizes."
             )
         if notes:
             warning = " ".join(notes)

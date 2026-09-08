@@ -158,26 +158,31 @@ operator drains on a timer.
 
 ## Placement
 
-The result is placed by giving the new object the source object's world matrix.
-The mesh data itself is **not** transformed by default.
+The result is placed by giving the new object the source object's world matrix,
+and its geometry is corrected onto the source's local bounding box. The
+correction always runs; there is no switch for it.
 
-That is deliberate and was learned the hard way. The first version forced the
-result's bounding box onto the source's, following the alignment step in
-Phototron's `bakeTexturesBlender`. The correction never demonstrably helped, and
-twice it displaced and rescaled a result that had been correct, because
-fragments the model had placed outside the object inflated the measurement. The
-models return the result in the coordinate space of the uploaded mesh, so there
-is normally nothing to correct. Phototron itself only corrects beyond a one
-percent deviation, which says the same thing.
+The recipe follows the alignment in Phototron's `bakeTexturesBlender`: compare
+the diagonal of the bounding box rather than the longest single axis, correct
+the size only beyond one percent, and re-centre only beyond one percent of the
+source diagonal. Worth knowing about the original: Phototron aligns only the
+throwaway copy it bakes with. The retopo file it hands the user is the raw API
+result, so the alignment there is a safety net for baking, not the main path.
 
-Size and position are still measured on every run and written to the system
-console: both bounding-box diagonals, the resulting factor and the offset. If
-they differ beyond one percent, the panel says so and leaves the mesh alone.
-*Fit to Original* then forces the correction, for the case where a model really
-does return normalised geometry.
+Every run verifies itself afterwards and writes the numbers to the system
+console: the local bounding-box diagonals of source and result, their ratio, the
+centre offset, and the source object's scale. Three invariants must hold, and
+they are checked rather than assumed:
 
-The measurement uses the box diagonal rather than the longest single axis, so a
-slight shift in proportions cannot pair up two unrelated axes.
+- the diagonal ratio is one, within one percent
+- the centres coincide, within one percent of the diagonal
+- the new object's world matrix equals the source's
+
+A failure is written to the console and shown in the panel instead of being
+delivered silently. The check deliberately compares in local space. A world
+bounding box changes shape when an object is rotated, so two objects of equal
+size but different proportions would measure differently there and the check
+would raise false alarms.
 
 ## Stray fragments
 

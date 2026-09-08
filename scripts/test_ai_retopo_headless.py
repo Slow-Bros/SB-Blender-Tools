@@ -258,7 +258,7 @@ bpy.ops.wm.obj_export(filepath=obj_path, export_selected_objects=True, export_ma
 bpy.data.objects.remove(sim, do_unlink=True)
 
 settings = scene.sb_ai_retopo
-new, stats = mesh_io.import_result(ctx, obj_path, src, fit_to_original=True)
+new, stats = mesh_io.import_result(ctx, obj_path, src)
 ctx.view_layer.update()
 assert new.name == "Scan_retopo", new.name
 assert stats["fitted"], "bbox fit should have been applied to the normalized result"
@@ -285,7 +285,7 @@ print(f"[TEST] import + placement ok, bbox error {err:.2e}, parts {stats['parts'
 
 # Second import with an explicit name, source hidden afterwards
 new2, stats2 = mesh_io.import_result(ctx, obj_path, src, name="Scan_retopo_2",
-                                    hide_source=True, fit_to_original=True)
+                                    hide_source=True)
 assert new2.name == "Scan_retopo_2", new2.name
 assert src.hide_get() and "Scan" in bpy.data.objects, "source must be hidden, not deleted"
 src.hide_set(False)
@@ -306,7 +306,7 @@ for o in (main_part, stray):
     bpy.data.objects.remove(o, do_unlink=True)
 
 new3, stats3 = mesh_io.import_result(ctx, stray_path, src, name="Scan_retopo_stray",
-                                    remove_fragments=False, fit_to_original=True)
+                                    remove_fragments=False)
 ctx.view_layer.update()
 # Suzanne itself is 3 parts (head + two eyes), the stray cube is the 4th.
 # Only the cube sticks out of the head's box, so only it may be excluded.
@@ -379,7 +379,7 @@ src2.scale = Vector((3.0, 3.0, 3.0))
 ctx.view_layer.update()
 
 fixed, fstats = mesh_io.import_result(ctx, stray_path, src2, name="Ball_retopo",
-                                      remove_fragments=False, fit_to_original=True)
+                                      remove_fragments=False)
 ctx.view_layer.update()
 assert fstats["parts"] == 2 and fstats["filtered"], fstats
 b_lo, b_hi = world_bbox(src2)
@@ -418,8 +418,7 @@ fbx_target.rotation_euler = Euler((0.9, 0.1, 0.4))
 fbx_target.scale = Vector((1.5, 1.5, 1.5))
 ctx.view_layer.update()
 
-fbx_obj, fbx_stats = mesh_io.import_result(ctx, fbx_path, fbx_target, name="FbxBall_retopo",
-                                           fit_to_original=True)
+fbx_obj, fbx_stats = mesh_io.import_result(ctx, fbx_path, fbx_target, name="FbxBall_retopo")
 ctx.view_layer.update()
 assert fbx_obj.name == "FbxBall_retopo", fbx_obj.name
 assert fbx_stats["faces"] > 100, fbx_stats
@@ -431,9 +430,8 @@ print(f"[TEST] FBX result imported and placed ok: {fbx_stats['faces']} faces, er
 bpy.data.objects.remove(fbx_obj, do_unlink=True)
 bpy.data.objects.remove(fbx_target, do_unlink=True)
 
-# --- the default path must not touch the geometry. A result that comes back in
-# the space of the uploaded mesh is already correct; forcing it onto the
-# original's bounding box is what displaced and rescaled real results twice.
+# --- a result already in the right space must survive the correction unchanged,
+# and the world check must confirm it
 bpy.ops.mesh.primitive_monkey_add()
 plain = ctx.active_object
 plain.name = "PlainSource"
@@ -442,40 +440,69 @@ plain.rotation_euler = Euler((0.4, 0.2, 1.7))
 plain.scale = Vector((2.5, 2.5, 2.5))
 ctx.view_layer.update()
 
-bpy.ops.object.select_all(action="DESELECT")
-plain.select_set(True)
-ctx.view_layer.objects.active = plain
-plain_path = os.path.join(tmp, "plain_result.obj")
-# Export in local space, exactly what the API gets and gives back
 plain_mesh_copy = plain.data.copy()
 carrier = bpy.data.objects.new("carrier", plain_mesh_copy)
 scene.collection.objects.link(carrier)
 bpy.ops.object.select_all(action="DESELECT")
 carrier.select_set(True)
 ctx.view_layer.objects.active = carrier
+plain_path = os.path.join(tmp, "plain_result.obj")
 bpy.ops.wm.obj_export(filepath=plain_path, export_selected_objects=True, export_materials=False)
 bpy.data.objects.remove(carrier, do_unlink=True)
 
 before_co = [tuple(v.co) for v in plain.data.vertices[:20]]
 plain_obj, plain_stats = mesh_io.import_result(ctx, plain_path, plain, name="Plain_retopo")
 ctx.view_layer.update()
-assert not plain_stats["fitted"], "the default must not transform the mesh"
-assert not plain_stats["deviates"], plain_stats
+assert not plain_stats["fitted"], "an identical result needs no correction"
 after_co = [tuple(v.co) for v in plain_obj.data.vertices[:20]]
-assert all(abs(a[i] - b[i]) < 1e-5 for a, b in zip(before_co, after_co) for i in range(3)), \
-    "geometry must come through unchanged"
-p_lo, p_hi = world_bbox(plain)
-q_lo, q_hi = world_bbox(plain_obj)
-plain_err = max((p_lo - q_lo).length, (p_hi - q_hi).length)
-assert plain_err < 1e-4, f"untouched result must sit on the original: {plain_err}"
-print(f"[TEST] default leaves geometry untouched, placement error {plain_err:.2e}")
+assert all(abs(a[i] - b[i]) < 1e-5 for a, b in zip(before_co, after_co) for i in range(3)),     "geometry must come through unchanged"
+assert plain_stats["world_ok"], plain_stats
+assert plain_stats["world_residual"] < 1e-4, plain_stats
+print(f"[TEST] identical result untouched, world residual {plain_stats['world_residual']:.2e}")
 bpy.data.objects.remove(plain_obj, do_unlink=True)
+
+# --- a normalized result must be corrected and pass the world check. This is
+# the case that came back much too large in Blender.
+bpy.ops.mesh.primitive_monkey_add()
+norm_src = ctx.active_object
+norm_src.name = "NormSource"
+norm_src.location = Vector((5.0, 1.0, -2.0))
+norm_src.rotation_euler = Euler((0.1, 0.8, 0.3))
+norm_src.scale = Vector((4.0, 4.0, 4.0))
+ctx.view_layer.update()
+
+norm_copy = norm_src.data.copy()
+n_lo = Vector([min(v.co[i] for v in norm_copy.vertices) for i in range(3)])
+n_hi = Vector([max(v.co[i] for v in norm_copy.vertices) for i in range(3)])
+norm_copy.transform(Matrix.Scale(1.0 / max(n_hi - n_lo), 4)
+                    @ Matrix.Translation(-(n_lo + n_hi) * 0.5))
+carrier = bpy.data.objects.new("carrier2", norm_copy)
+scene.collection.objects.link(carrier)
+bpy.ops.object.select_all(action="DESELECT")
+carrier.select_set(True)
+ctx.view_layer.objects.active = carrier
+norm_path = os.path.join(tmp, "normalized_result.obj")
+bpy.ops.wm.obj_export(filepath=norm_path, export_selected_objects=True, export_materials=False)
+bpy.data.objects.remove(carrier, do_unlink=True)
+
+norm_obj, norm_stats = mesh_io.import_result(ctx, norm_path, norm_src, name="Norm_retopo")
+ctx.view_layer.update()
+assert norm_stats["fitted"], "a normalized result must be corrected"
+assert norm_stats["world_ok"], norm_stats
+assert norm_stats["world_residual"] < 1e-3, norm_stats
+# the object scale must not be counted twice: world size follows the original
+s_lo, s_hi = mesh_io.world_bbox(ctx, norm_src)
+n2_lo, n2_hi = mesh_io.world_bbox(ctx, norm_obj)
+assert (s_hi - s_lo - (n2_hi - n2_lo)).length < 1e-3, ((s_hi - s_lo), (n2_hi - n2_lo))
+print(f"[TEST] normalized result corrected, world residual {norm_stats['world_residual']:.2e}")
+bpy.data.objects.remove(norm_obj, do_unlink=True)
+bpy.data.objects.remove(norm_src, do_unlink=True)
 
 # --- stray fragments are deleted by default, and the mesh still lands right
 frag_obj, frag_stats = mesh_io.import_result(ctx, stray_path, src, name="Frag_retopo")
 assert frag_stats["outlier_parts"] >= 1, frag_stats
 assert frag_stats["fragments_removed"] > 0, frag_stats
-assert not frag_stats["fitted"], "removing fragments must not imply a transform"
+assert frag_stats["world_ok"], frag_stats
 # The reported counts describe what was found, so check the mesh itself
 post = mesh_io.analyze_parts(frag_obj.data)
 assert post["outlier_parts"] == 0, post

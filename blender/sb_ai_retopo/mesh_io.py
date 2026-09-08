@@ -4,18 +4,16 @@
 Laeuft ausschliesslich im Blender-Hauptthread (bpy-Zugriff).
 
 Koordinaten: Das Quellobjekt wird im lokalen Raum (Objekttransform = Identity)
-als GLB exportiert. Die Modelle liefern das Ergebnis in genau diesem Raum
-zurueck, deshalb genuegt es, dem neuen Objekt die Welt-Matrix des Originals zu
-geben. Am Mesh selbst wird standardmaessig nichts verrechnet.
+als GLB exportiert. Das Ergebnis wird auf die lokale Bounding-Box des Originals
+korrigiert und bekommt dessen Welt-Matrix.
 
-Das war nicht immer so: zuerst wurde die Bounding-Box des Ergebnisses auf die
-des Originals gezwungen. Diese Korrektur hat nie nachweislich geholfen, aber
-zweimal ein korrekt sitzendes Ergebnis verschoben und falsch skaliert, weil von
-der KI erzeugte Fragmente die Messung aufgeblaeht haben. Sie ist deshalb nur
-noch auf ausdrueckliche Anforderung aktiv (fit_to_original). Gemessen und
-protokolliert wird weiterhin immer, damit eine echte Abweichung auffaellt.
-Auch Phototron korrigiert erst ab einem Prozent Abweichung der Box-Diagonale,
-was bestaetigt, dass der Normalfall keine Korrektur braucht.
+Die Korrektur folgt Phototron (bakeTexturesBlender in
+apps/desktop/public/ipc/retopology.js): verglichen wird die Diagonale der Box,
+korrigiert wird ab einem Prozent Abweichung. Zusaetzlich wird das Ergebnis am
+Ende in Weltkoordinaten gegen das Original nachgemessen. Diese Nachmessung ist
+die eigentliche Wahrheit, denn sie beschreibt, was im Viewport zu sehen ist.
+Weicht sie ab, steht das im Log und im Panel, statt still ausgeliefert zu
+werden.
 """
 
 import os
@@ -482,16 +480,30 @@ def face_stats(mesh):
     return {"faces": len(mesh.polygons), "quads": quads, "tris": tris, "ngons": ngons}
 
 
+def world_bbox(context, obj):
+    """Welt-Bounding-Box der evaluierten Geometrie eines Objekts.
+
+    Wie in Phototron ueber die Ecken der lokalen Box, damit beide Objekte
+    identisch gemessen werden.
+    """
+    lo, hi = local_bbox(context, obj)
+    pts = [obj.matrix_world @ Vector((x, y, z))
+           for x in (lo.x, hi.x) for y in (lo.y, hi.y) for z in (lo.z, hi.z)]
+    return (Vector([min(p[i] for p in pts) for i in range(3)]),
+            Vector([max(p[i] for p in pts) for i in range(3)]))
+
+
 def import_result(context, path, source_obj, *, name=None, hide_source=False,
-                  remove_fragments=True, fit_to_original=False):
+                  remove_fragments=True):
     """Importiert das Retopo-Ergebnis und legt es als neues Objekt neben dem
     Original ab.
 
-    Die Modelle liefern das Ergebnis im Koordinatenraum des hochgeladenen
-    Meshes zurueck, deshalb genuegt die Welt-Matrix des Originals und es wird
-    standardmaessig NICHTS am Mesh verrechnet. Groesse und Lage werden nur
-    gemessen und protokolliert. fit_to_original erzwingt die Korrektur fuer
-    den Fall, dass ein Modell doch normalisiert zurueckgibt.
+    Groesse und Lage werden immer gegen das Original geprueft und korrigiert,
+    nach dem Rezept aus Phototron (bakeTexturesBlender): verglichen wird die
+    Diagonale der Bounding-Box, korrigiert wird ab einem Prozent Abweichung.
+    Zum Schluss wird das Ergebnis in Weltkoordinaten gegen das Original
+    nachgemessen und protokolliert, damit eine falsche Korrektur auffaellt
+    statt still auszuliefern.
 
     Returns: (new_object, stats_dict)
     """
@@ -527,20 +539,15 @@ def import_result(context, path, source_obj, *, name=None, hide_source=False,
     applied = False
     if fit is None:
         _log("Size and position match the original, nothing to correct")
-    elif fit_to_original:
+    else:
         parts = []
         if fit_info["scaled"]:
             parts.append(f"scaled by {fit_info['scale']:.4f}")
         if fit_info["moved"]:
             parts.append(f"moved by {fit_info['offset']:.4f}")
-        _log("Fit to original: " + " and ".join(parts))
+        _log("Correction: " + " and ".join(parts))
         mesh.transform(fit)
         applied = True
-    else:
-        _log(
-            "Size or position differ from the original, left as returned. "
-            "Enable 'Fit to Original' if the result really is misplaced."
-        )
 
     _apply_smooth_shading(context, obj)
 
@@ -573,10 +580,50 @@ def import_result(context, path, source_obj, *, name=None, hide_source=False,
     except RuntimeError:
         pass
 
+    # Nachmessen. Bewusst nicht ueber die Welt-Box: deren Ausdehnung haengt
+    # bei gedrehten Objekten von der Form ab, zwei gleich grosse Objekte
+    # unterschiedlicher Proportion ergaeben dort verschiedene Werte. Geprueft
+    # werden stattdessen zwei rotationsunabhaengige Invarianten.
+    context.view_layer.update()
+    check = analyze_parts(mesh)
+    res_diag = (check["hi"] - check["lo"]).length
+    src_diag = (src_hi - src_lo).length
+    size_ratio = res_diag / src_diag if src_diag > 1e-12 else 1.0
+    centre_off = ((src_lo + src_hi) - (check["lo"] + check["hi"])).length * 0.5
+
+    matrix_delta = max(
+        abs(a - b)
+        for row_a, row_b in zip(obj.matrix_world, source_obj.matrix_world)
+        for a, b in zip(row_a, row_b)
+    )
+    size_ok = abs(size_ratio - 1.0) <= SCALE_TOLERANCE
+    centre_ok = centre_off <= src_diag * OFFSET_TOLERANCE
+    matrix_ok = matrix_delta < 1e-5
+    ok = size_ok and centre_ok and matrix_ok
+
+    src_world = (source_obj.matrix_world.to_scale()[0] * src_diag)
+    _log(
+        f"Check: local diagonal original {src_diag:.4f}, result {res_diag:.4f} "
+        f"(ratio {size_ratio:.6f}), centre off {centre_off:.4f}, "
+        f"object scale {tuple(round(v, 4) for v in source_obj.scale)}, "
+        f"world diagonal about {src_world:.4f}"
+    )
+    if not ok:
+        reasons = []
+        if not size_ok:
+            reasons.append(f"size ratio {size_ratio:.4f}")
+        if not centre_ok:
+            reasons.append(f"centre off {centre_off:.4f}")
+        if not matrix_ok:
+            reasons.append(f"transform differs by {matrix_delta:.6f}")
+        _log("Check FAILED: " + ", ".join(reasons))
+
     stats = face_stats(mesh)
+    stats["world_residual"] = abs(size_ratio - 1.0)
+    stats["world_centre_offset"] = centre_off
+    stats["world_ok"] = ok
     stats["fitted"] = applied
     # Abweichung ohne angewandte Korrektur: das Panel warnt darauf hin
-    stats["deviates"] = fit is not None and not applied
     stats.update(fit_info)
     stats.update(part_info)
     return obj, stats
