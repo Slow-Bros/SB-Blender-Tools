@@ -367,22 +367,33 @@ class SB_OT_refresh_models(bpy.types.Operator):
             if thread.is_alive():
                 return 0.2
             cls._pending = None
+            try:
+                prefs = preferences.get_prefs()
+            except Exception:  # noqa: BLE001
+                _log(traceback.format_exc())
+                return None
+
             if "error" in result:
+                # Auch in der Oberflaeche melden, nicht nur in der Konsole:
+                # ein stiller Knopf ist als Diagnose wertlos
+                prefs.catalogue_error = result["error"]
                 _log(f"Catalogue refresh failed: {result['error']}")
             else:
                 entries = result.get("models", [])
-                try:
-                    prefs = preferences.get_prefs()
-                    prefs.set_catalogue(entries)
-                except Exception:  # noqa: BLE001
-                    _log(traceback.format_exc())
-                    return None
+                prefs.set_catalogue(entries)
                 missing = models.classify({m[0] for m in entries})["missing"]
                 unknown = models.unknown_candidates(entries)
+                found = len(models.known_ids() & {m[0] for m in entries})
                 _log(
-                    f"Catalogue: {len(entries)} models, {len(missing)} of ours missing, "
+                    f"Catalogue: {len(entries)} models, {found} of our "
+                    f"{len(models.MODELS)} registry models present, "
                     f"{len(unknown)} unknown retopology candidates"
                 )
+                if entries and found == 0:
+                    _log(
+                        "None of the registry models appear in this list, so it is "
+                        "probably not the catalogue of usable generation models"
+                    )
                 for model_id, name in unknown:
                     _log(f"  not in registry: {model_id} {name}".rstrip())
             _redraw_all()

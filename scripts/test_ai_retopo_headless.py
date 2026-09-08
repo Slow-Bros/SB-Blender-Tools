@@ -141,6 +141,23 @@ assert gone == [m["id"] for m in models.MODELS[1:]], gone
 unknown = models.unknown_candidates(cat + [("model_acme-retopo", "Acme Retopo"),
                                            ("model_acme-texture", "Acme Texture")])
 assert unknown == [("model_acme-retopo", "Acme Retopo")], unknown
+
+# --- the refresh must report its outcome, a silent button is no diagnostic
+prefs.catalogue_json = ""
+prefs.catalogue_fetched = ""
+prefs.catalogue_error = ""
+assert prefs.catalogue() == [] and not prefs.catalogue_fetched
+prefs.catalogue_error = "API 403: forbidden"
+assert prefs.catalogue_error, "an error must survive in the preferences"
+prefs.set_catalogue([])                     # fetched, but nothing readable
+assert prefs.catalogue_fetched, "a fetch must be timestamped even when empty"
+assert prefs.catalogue_error == "", "a successful fetch must clear the error"
+assert prefs.catalogue() == []
+prefs.set_catalogue(cat)
+assert len(prefs.catalogue()) == len(cat)
+assert models.known_ids() & prefs.available_ids() == models.known_ids()
+prefs.catalogue_json = ""
+prefs.catalogue_fetched = ""
 print("[TEST] catalogue parsing + comparison ok")
 
 # --- source object: Suzanne, subdivided, transformed, with material/vertex color

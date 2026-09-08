@@ -191,9 +191,11 @@ class ScenarioClient:
         seen = set()
         cursor = None
         for _ in range(max_pages):
-            path = "/v1/models?pageSize=100"
+            # Erste Seite ohne geratene Query-Parameter anfordern; nur wenn die
+            # Antwort selbst einen Cursor nennt, wird ueberhaupt paginiert.
+            path = "/v1/models"
             if cursor:
-                path += f"&paginationToken={urllib.parse.quote(str(cursor))}"
+                path += f"?paginationToken={urllib.parse.quote(str(cursor))}"
             res = self._request("GET", path)
             page = extract_models(res)
             if not page and not found:

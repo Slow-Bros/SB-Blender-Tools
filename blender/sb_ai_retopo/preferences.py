@@ -51,6 +51,7 @@ class SBAIRetopoPreferences(bpy.types.AddonPreferences):
     # Cache des Modellkatalogs als JSON-Text, damit er die Sitzung ueberlebt
     catalogue_json: StringProperty(default="", options={"HIDDEN"})
     catalogue_fetched: StringProperty(default="", options={"HIDDEN"})
+    catalogue_error: StringProperty(default="", options={"HIDDEN"})
 
     def draw(self, context):
         layout = self.layout
@@ -88,8 +89,32 @@ class SBAIRetopoPreferences(bpy.types.AddonPreferences):
         row.operator("sb.ai_retopo_export_registry", icon="EXPORT")
 
         catalogue = self.catalogue()
+        if self.catalogue_error:
+            sub = box.box()
+            sub.alert = True
+            sub.label(text="Last catalogue refresh failed:", icon="ERROR")
+            for line in _wrap(self.catalogue_error, 70):
+                sub.label(text=line, icon="BLANK1")
+        elif self.catalogue_fetched and not catalogue:
+            sub = box.box()
+            sub.alert = True
+            sub.label(text=f"Refreshed {self.catalogue_fetched}, but no models could be read",
+                      icon="ERROR")
+            sub.label(text="The response did not have the expected shape.", icon="BLANK1")
+            sub.label(text="The system console shows what came back.", icon="BLANK1")
+
         if catalogue:
             box.label(text=f"Catalogue: {len(catalogue)} models, checked {self.catalogue_fetched}")
+            found = len(models.known_ids() & {m[0] for m in catalogue})
+            row = box.row()
+            row.alert = found == 0
+            row.label(
+                text=f"Registry models present in the catalogue: {found} of {len(models.MODELS)}",
+                icon="CHECKMARK" if found else "ERROR",
+            )
+            if found == 0:
+                box.label(text="None of them appear, so this list is probably not the right one.",
+                          icon="BLANK1")
             missing = models.classify({m[0] for m in catalogue})["missing"]
             if missing:
                 sub = box.box()
@@ -104,7 +129,7 @@ class SBAIRetopoPreferences(bpy.types.AddonPreferences):
                 for model_id, name in unknown[:8]:
                     sub.label(text=f"{model_id}  {name}".strip(), icon="BLANK1")
                 sub.label(text="Add them to the registry file to make them selectable.", icon="BLANK1")
-        else:
+        elif not self.catalogue_fetched and not self.catalogue_error:
             box.label(text="Catalogue not fetched yet.", icon="INFO")
 
         user_path = models.user_file_path()
@@ -126,9 +151,24 @@ class SBAIRetopoPreferences(bpy.types.AddonPreferences):
     def set_catalogue(self, entries):
         self.catalogue_json = json.dumps([[i, n] for i, n in entries])
         self.catalogue_fetched = time.strftime("%Y-%m-%d %H:%M")
+        self.catalogue_error = ""
 
     def available_ids(self):
         return {model_id for model_id, _ in self.catalogue()}
+
+
+def _wrap(text, width):
+    words = text.split()
+    lines, current = [], ""
+    for w in words:
+        if len(current) + len(w) + 1 > width and current:
+            lines.append(current)
+            current = w
+        else:
+            current = f"{current} {w}".strip()
+    if current:
+        lines.append(current)
+    return lines or [text]
 
 
 def _short(path):
