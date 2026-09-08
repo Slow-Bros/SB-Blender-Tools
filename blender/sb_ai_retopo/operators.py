@@ -56,15 +56,15 @@ def _worker(job, api_key, api_secret, glb_path, model_spec, request_body, poll_i
         with open(glb_path, "rb") as f:
             data = f.read()
 
-        emit("progress", value=0.08, message="Mesh wird hochgeladen ...")
+        emit("progress", value=0.08, message="Uploading mesh ...")
         asset_id = client.upload_3d(
             data, os.path.basename(glb_path), "model/gltf-binary",
             on_progress=lambda p: emit("progress", value=0.08 + p * 0.10,
-                                       message=f"Hochladen ... {int(p * 100)}%"),
+                                       message=f"Uploading ... {int(p * 100)}%"),
         )
         log(f"Asset: {asset_id}")
 
-        emit("progress", value=0.22, message=f"Job wird gestartet ({model_spec['label']}) ...")
+        emit("progress", value=0.22, message=f"Starting job ({model_spec['label']}) ...")
         body = dict(request_body)
         body[model_spec["file_param"]] = asset_id
         job_id = client.start_generation(model_spec["id"], body)
@@ -74,16 +74,16 @@ def _worker(job, api_key, api_secret, glb_path, model_spec, request_body, poll_i
             frac = progress if isinstance(progress, (int, float)) and 0 <= progress <= 1 else None
             if frac is None:
                 frac = min(count * poll_interval / job_timeout, 0.95)
-            emit("progress", value=0.25 + frac * 0.60, message=f"Retopologie laeuft ... ({status})")
+            emit("progress", value=0.25 + frac * 0.60, message=f"Retopology running ... ({status})")
 
         result = client.wait_for_job(job_id, on_poll=on_poll)
 
-        emit("progress", value=0.88, message="Ergebnis wird heruntergeladen ...")
+        emit("progress", value=0.88, message="Downloading result ...")
         mesh_bytes, ext = client.download_job_mesh(result)
         out_path = os.path.join(job.temp_dir, f"retopo_result{ext}")
         with open(out_path, "wb") as f:
             f.write(mesh_bytes)
-        log(f"Ergebnis: {out_path} ({len(mesh_bytes) / 1024:.0f} KB)")
+        log(f"Result: {out_path} ({len(mesh_bytes) / 1024:.0f} KB)")
         emit("done", path=out_path)
     except Cancelled:
         emit("cancelled")
@@ -96,8 +96,8 @@ def _worker(job, api_key, api_secret, glb_path, model_spec, request_body, poll_i
 
 class SB_OT_ai_retopo(bpy.types.Operator):
     bl_idname = "sb.ai_retopo"
-    bl_label = "KI-Retopologie"
-    bl_description = "Aktives Mesh per Scenario API (Hunyuan PolyGen) retopologisieren und als neues Objekt importieren"
+    bl_label = "AI Retopology"
+    bl_description = "Retopologize the active mesh through the Scenario API and import the result as a new object"
     bl_options = {"REGISTER"}
 
     _timer = None
@@ -117,11 +117,23 @@ class SB_OT_ai_retopo(bpy.types.Operator):
         prefs = preferences.get_prefs(context)
         api_key, api_secret = preferences.get_credentials(context)
         if not api_key or not api_secret:
-            self.report({"ERROR"}, "Scenario API Key/Secret fehlen (Add-on-Einstellungen).")
+            self.report({"ERROR"}, "Scenario API key and secret are missing (add-on preferences).")
             return {"CANCELLED"}
 
         source = context.active_object
         spec = models.get(settings.model)
+
+        # Falls der Katalog bekannt ist: nicht erst nach dem Upload scheitern
+        available = prefs.available_ids()
+        if available and spec["id"] not in available:
+            msg = (
+                f"'{spec['label']}' ({spec['id']}) is not offered by the API any more. "
+                "Pick another model, or refresh the catalogue in the add-on preferences."
+            )
+            settings.last_error = msg
+            self.report({"ERROR"}, msg)
+            return {"CANCELLED"}
+
         # asset_id wird erst nach dem Upload im Worker eingesetzt
         request_body = models.build_request(
             spec, "", settings.polygon_type,
@@ -136,7 +148,7 @@ class SB_OT_ai_retopo(bpy.types.Operator):
 
         settings.running = True
         settings.progress = 0.02
-        settings.status = "Mesh wird exportiert ..."
+        settings.status = "Exporting mesh ..."
         settings.last_error = ""
         settings.last_result = ""
         settings.last_warning = ""
@@ -149,21 +161,21 @@ class SB_OT_ai_retopo(bpy.types.Operator):
             settings.status = ""
             settings.last_error = str(e)
             shutil.rmtree(job.temp_dir, ignore_errors=True)
-            self.report({"ERROR"}, f"Export fehlgeschlagen: {e}")
+            self.report({"ERROR"}, f"Export failed: {e}")
             return {"CANCELLED"}
 
         if models.uses_count(spec):
             wanted = settings.target_faces
             actual = models.clamp_count(spec, wanted)
-            density = f"Ziel {actual} Faces"
+            density = f"target {actual} faces"
             if actual != wanted:
-                density += f" (von {wanted} auf den Bereich des Modells begrenzt)"
+                density += f" (clamped from {wanted} to the model range)"
         else:
-            density = f"Stufe {settings.face_level}"
+            density = f"level {settings.face_level}"
 
         _log(
-            f"Export: {info['faces']} Faces roh, {info['faces_clean']} nach Cleanup, "
-            f"{info['faces_exported']} hochgeladen, {info['bytes'] / 1024 / 1024:.1f} MB | "
+            f"Export: {info['faces']} faces raw, {info['faces_clean']} after cleanup, "
+            f"{info['faces_exported']} uploaded, {info['bytes'] / 1024 / 1024:.1f} MB | "
             f"{spec['label']}, {density}, {settings.polygon_type}"
         )
 
@@ -180,7 +192,7 @@ class SB_OT_ai_retopo(bpy.types.Operator):
         wm = context.window_manager
         self._timer = wm.event_timer_add(0.25, window=context.window)
         wm.modal_handler_add(self)
-        settings.status = "Verbindung zur Scenario API ..."
+        settings.status = "Connecting to the Scenario API ..."
         return {"RUNNING_MODAL"}
 
     def modal(self, context, event):
@@ -207,8 +219,8 @@ class SB_OT_ai_retopo(bpy.types.Operator):
                 job.result_path = data["path"]
                 return self._import(context, job)
             elif kind == "cancelled":
-                settings.last_error = "Abgebrochen."
-                self.report({"WARNING"}, "KI-Retopologie abgebrochen.")
+                settings.last_error = "Cancelled."
+                self.report({"WARNING"}, "AI retopology cancelled.")
                 return self._finish(context)
             elif kind == "error":
                 settings.last_error = data["message"]
@@ -217,7 +229,7 @@ class SB_OT_ai_retopo(bpy.types.Operator):
 
         if not job.thread.is_alive() and job.events.empty():
             # Thread endete ohne Meldung -> als Fehler behandeln
-            settings.last_error = "Worker-Thread unerwartet beendet."
+            settings.last_error = "The worker thread stopped unexpectedly."
             return self._finish(context)
 
         _redraw(context)
@@ -226,10 +238,10 @@ class SB_OT_ai_retopo(bpy.types.Operator):
     def _import(self, context, job):
         settings = context.scene.sb_ai_retopo
         settings.progress = 0.92
-        settings.status = "Ergebnis wird importiert ..."
+        settings.status = "Importing result ..."
         source = bpy.data.objects.get(job.source_name)
         if source is None:
-            settings.last_error = f"Originalobjekt '{job.source_name}' existiert nicht mehr."
+            settings.last_error = f"The source object '{job.source_name}' no longer exists."
             self.report({"ERROR"}, settings.last_error)
             return self._finish(context)
         try:
@@ -239,20 +251,20 @@ class SB_OT_ai_retopo(bpy.types.Operator):
             )
         except Exception as e:  # noqa: BLE001
             _log(traceback.format_exc())
-            settings.last_error = f"Import fehlgeschlagen: {e}"
+            settings.last_error = f"Import failed: {e}"
             self.report({"ERROR"}, settings.last_error)
             return self._finish(context)
 
-        summary = f"{obj.name}: {stats['faces']} Faces, {stats['quads']} Quads, {stats['tris']} Tris"
+        summary = f"{obj.name}: {stats['faces']} faces, {stats['quads']} quads, {stats['tris']} tris"
         if stats["ngons"]:
-            summary += f", {stats['ngons']} N-Gons"
+            summary += f", {stats['ngons']} n-gons"
         settings.last_result = summary
         _log(summary)
 
         if stats["outlier_parts"]:
             warning = (
-                f"KI-Ergebnis hat {stats['outlier_parts']} Fragment(e) ausserhalb des Objekts. "
-                "Bei der Einpassung ignoriert, im Mesh pruefen und ggf. loeschen."
+                f"The result has {stats['outlier_parts']} fragment(s) outside the object. "
+                "They were ignored when fitting; check the mesh and delete them if unwanted."
             )
             settings.last_warning = warning
             _log(warning)
@@ -260,7 +272,7 @@ class SB_OT_ai_retopo(bpy.types.Operator):
         else:
             settings.last_warning = ""
 
-        self.report({"INFO"}, f"KI-Retopologie fertig: {summary}")
+        self.report({"INFO"}, f"AI retopology finished: {summary}")
         return self._finish(context, success=True)
 
     def _finish(self, context, success=False):
@@ -278,15 +290,15 @@ class SB_OT_ai_retopo(bpy.types.Operator):
         _job = None
         settings.running = False
         settings.progress = 1.0 if success else 0.0
-        settings.status = "Fertig." if success else ""
+        settings.status = "Done." if success else ""
         _redraw(context)
         return {"FINISHED"} if success else {"CANCELLED"}
 
 
 class SB_OT_ai_retopo_cancel(bpy.types.Operator):
     bl_idname = "sb.ai_retopo_cancel"
-    bl_label = "Abbrechen"
-    bl_description = "Laufende KI-Retopologie abbrechen"
+    bl_label = "Cancel"
+    bl_description = "Cancel the running AI retopology job"
 
     @classmethod
     def poll(cls, context):
@@ -295,8 +307,116 @@ class SB_OT_ai_retopo_cancel(bpy.types.Operator):
     def execute(self, context):
         if _job is not None:
             _job.cancel.set()
-            context.scene.sb_ai_retopo.status = "Wird abgebrochen ..."
+            context.scene.sb_ai_retopo.status = "Cancelling ..."
         return {"FINISHED"}
+
+
+class SB_OT_refresh_models(bpy.types.Operator):
+    bl_idname = "sb.ai_retopo_refresh_models"
+    bl_label = "Refresh Catalogue"
+    bl_description = "Fetch the model catalogue from the Scenario API and cache it"
+
+    # Der Abruf laeuft im Thread, ein bpy.app.timer holt das Ergebnis ab.
+    # Panels duerfen niemals selbst Netzwerkverkehr ausloesen.
+    _pending = None
+
+    @classmethod
+    def poll(cls, context):
+        return cls._pending is None
+
+    def execute(self, context):
+        api_key, api_secret = preferences.get_credentials(context)
+        if not api_key or not api_secret:
+            self.report({"ERROR"}, "Scenario API key and secret are missing (add-on preferences).")
+            return {"CANCELLED"}
+
+        result = {}
+        cls = SB_OT_refresh_models
+
+        def fetch():
+            try:
+                client = ScenarioClient(api_key, api_secret, log=_log)
+                result["models"] = client.list_models()
+            except ScenarioError as e:
+                result["error"] = str(e)
+            except Exception as e:  # noqa: BLE001
+                _log(traceback.format_exc())
+                result["error"] = f"{type(e).__name__}: {e}"
+
+        thread = threading.Thread(target=fetch, daemon=True, name="sb_ai_retopo_models")
+        thread.start()
+        cls._pending = thread
+
+        def collect():
+            if thread.is_alive():
+                return 0.2
+            cls._pending = None
+            if "error" in result:
+                _log(f"Catalogue refresh failed: {result['error']}")
+            else:
+                entries = result.get("models", [])
+                try:
+                    prefs = preferences.get_prefs()
+                    prefs.set_catalogue(entries)
+                except Exception:  # noqa: BLE001
+                    _log(traceback.format_exc())
+                    return None
+                missing = models.classify({m[0] for m in entries})["missing"]
+                unknown = models.unknown_candidates(entries)
+                _log(
+                    f"Catalogue: {len(entries)} models, {len(missing)} of ours missing, "
+                    f"{len(unknown)} unknown retopology candidates"
+                )
+                for model_id, name in unknown:
+                    _log(f"  not in registry: {model_id} {name}".rstrip())
+            _redraw_all()
+            return None
+
+        bpy.app.timers.register(collect, first_interval=0.2)
+        self.report({"INFO"}, "Fetching the model catalogue ...")
+        return {"FINISHED"}
+
+
+class SB_OT_reload_registry(bpy.types.Operator):
+    bl_idname = "sb.ai_retopo_reload_registry"
+    bl_label = "Reload Registry"
+    bl_description = "Read the model registry file again, without restarting Blender"
+
+    def execute(self, context):
+        models.load()
+        _redraw_all()
+        if models.LOAD_ERROR:
+            self.report({"WARNING"}, f"Registry: {models.LOAD_ERROR}")
+        else:
+            self.report({"INFO"}, f"Registry: {len(models.MODELS)} models loaded")
+        return {"FINISHED"}
+
+
+class SB_OT_export_registry(bpy.types.Operator):
+    bl_idname = "sb.ai_retopo_export_registry"
+    bl_label = "Export Model List"
+    bl_description = (
+        "Write the model registry to the Blender config folder so it can be "
+        "edited and survives reinstalling the add-on"
+    )
+
+    def execute(self, context):
+        try:
+            path = models.save_user_file()
+        except Exception as e:  # noqa: BLE001
+            self.report({"ERROR"}, f"Could not write the registry: {e}")
+            return {"CANCELLED"}
+        models.load()
+        _redraw_all()
+        self.report({"INFO"}, f"Registry written to {path}")
+        return {"FINISHED"}
+
+
+def _redraw_all():
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type in ("VIEW_3D", "PREFERENCES"):
+                area.tag_redraw()
 
 
 def _redraw(context):
@@ -308,7 +428,13 @@ def _redraw(context):
             area.tag_redraw()
 
 
-classes = (SB_OT_ai_retopo, SB_OT_ai_retopo_cancel)
+classes = (
+    SB_OT_ai_retopo,
+    SB_OT_ai_retopo_cancel,
+    SB_OT_refresh_models,
+    SB_OT_reload_registry,
+    SB_OT_export_registry,
+)
 
 
 def register():

@@ -82,14 +82,14 @@ def export_object_for_upload(context, obj, glb_path, decimate_target=0):
     Returns: dict mit Statistik (faces, faces_clean, faces_exported, bytes, cleanup)
     """
     if obj is None or obj.type != "MESH":
-        raise MeshIOError("Bitte ein Mesh-Objekt auswaehlen.")
+        raise MeshIOError("Please select a mesh object.")
 
     depsgraph = context.evaluated_depsgraph_get()
     eval_obj = obj.evaluated_get(depsgraph)
     mesh = bpy.data.meshes.new_from_object(eval_obj, preserve_all_data_layers=False, depsgraph=depsgraph)
     if len(mesh.polygons) == 0:
         bpy.data.meshes.remove(mesh)
-        raise MeshIOError(f"'{obj.name}' enthaelt keine Faces.")
+        raise MeshIOError(f"'{obj.name}' has no faces.")
 
     mesh.name = f"{obj.name}_sb_upload"
     faces_before = len(mesh.polygons)
@@ -107,10 +107,10 @@ def export_object_for_upload(context, obj, glb_path, decimate_target=0):
     faces_clean = len(mesh.polygons)
     if faces_clean == 0:
         bpy.data.meshes.remove(mesh)
-        raise MeshIOError(f"'{obj.name}' hat nach dem Cleanup keine Faces mehr.")
+        raise MeshIOError(f"'{obj.name}' has no faces left after the cleanup.")
     _log(
-        f"Cleanup: {faces_before} -> {faces_clean} Faces, "
-        f"{cleanup['verts_removed']} doppelte und {cleanup['loose_removed']} lose Vertices entfernt"
+        f"Cleanup: {faces_before} -> {faces_clean} faces, removed "
+        f"{cleanup['verts_removed']} duplicate and {cleanup['loose_removed']} loose vertices"
     )
 
     temp = bpy.data.objects.new(mesh.name, mesh)
@@ -156,7 +156,7 @@ def export_object_for_upload(context, obj, glb_path, decimate_target=0):
 
         result = bpy.ops.export_scene.gltf(**kwargs)
         if "FINISHED" not in result:
-            raise MeshIOError(f"glTF-Export fehlgeschlagen: {result}")
+            raise MeshIOError(f"glTF export failed: {result}")
 
         faces_exported = min(faces_clean, decimate_target) if decimate_target else faces_clean
     finally:
@@ -174,7 +174,7 @@ def export_object_for_upload(context, obj, glb_path, decimate_target=0):
         bpy.data.meshes.remove(mesh)
 
     if not os.path.exists(glb_path):
-        raise MeshIOError("GLB-Datei wurde nicht erstellt.")
+        raise MeshIOError("The GLB file was not created.")
 
     return {
         "faces": faces_before,
@@ -195,7 +195,7 @@ def _mesh_bbox(mesh):
     """
     n = len(mesh.vertices)
     if n == 0:
-        raise MeshIOError("Mesh hat keine Vertices.")
+        raise MeshIOError("The mesh has no vertices.")
     co = np.empty(n * 3, dtype=np.float32)
     mesh.vertices.foreach_get("co", co)
     co = co.reshape(-1, 3)
@@ -251,7 +251,7 @@ def bbox_without_outliers(mesh):
     """
     n = len(mesh.vertices)
     if n == 0:
-        raise MeshIOError("Mesh hat keine Vertices.")
+        raise MeshIOError("The mesh has no vertices.")
 
     co = np.empty(n * 3, dtype=np.float32)
     mesh.vertices.foreach_get("co", co)
@@ -324,7 +324,7 @@ def fit_matrix(src_lo, src_hi, res_lo, res_hi):
     src_diag = (src_hi - src_lo).length
     res_diag = (res_hi - res_lo).length
     if res_diag <= 1e-12:
-        raise MeshIOError("Ergebnis-Mesh ist degeneriert (Ausdehnung 0).")
+        raise MeshIOError("The result mesh is degenerate, its size is zero.")
 
     scale = src_diag / res_diag
     src_center = (src_lo + src_hi) * 0.5
@@ -359,9 +359,9 @@ def _import_file(context, path):
     elif ext in (".glb", ".gltf"):
         result = bpy.ops.import_scene.gltf(filepath=path)
     else:
-        raise MeshIOError(f"Unbekanntes Ergebnisformat: {ext}")
+        raise MeshIOError(f"Unknown result format: {ext}")
     if "FINISHED" not in result:
-        raise MeshIOError(f"Import fehlgeschlagen: {result}")
+        raise MeshIOError(f"Import failed: {result}")
     return [o for o in bpy.data.objects if o not in before]
 
 
@@ -373,7 +373,7 @@ def _consolidate(context, new_objects):
     if not meshes:
         for o in new_objects:
             bpy.data.objects.remove(o, do_unlink=True)
-        raise MeshIOError("Import enthielt kein Mesh.")
+        raise MeshIOError("The import contained no mesh.")
 
     # Nach dem Import muss der Depsgraph aktualisiert sein, sonst liefert
     # matrix_world bei verschachtelten Objekten veraltete Werte
@@ -450,24 +450,24 @@ def import_result(context, path, source_obj, *, name=None, hide_source=False):
 
     if part_info["parts"] > 1:
         _log(
-            f"Ergebnis besteht aus {part_info['parts']} getrennten Teilen, "
-            f"davon {part_info['outlier_parts']} abseits liegend "
-            f"({part_info['outlier_fraction'] * 100:.2f}% der Vertices)"
-            + (", bei der Messung ignoriert" if part_info["filtered"] else ", alle mitgemessen")
+            f"Result consists of {part_info['parts']} separate parts, "
+            f"{part_info['outlier_parts']} of them outliers "
+            f"({part_info['outlier_fraction'] * 100:.2f}% of the vertices)"
+            + (", ignored when measuring" if part_info["filtered"] else ", all included in the measurement")
         )
     _log(
-        f"Bounding-Box: Original {fit_info['src_diag']:.4f}, Ergebnis {fit_info['res_diag']:.4f}, "
-        f"Faktor {fit_info['scale']:.6f}, Versatz {fit_info['offset']:.4f}"
+        f"Bounding box: source {fit_info['src_diag']:.4f}, result {fit_info['res_diag']:.4f}, "
+        f"factor {fit_info['scale']:.6f}, offset {fit_info['offset']:.4f}"
     )
     if fit is None:
-        _log("Groesse und Lage innerhalb der Toleranz, keine Korrektur")
+        _log("Size and position within tolerance, no correction applied")
     else:
         parts = []
         if fit_info["scaled"]:
-            parts.append(f"skaliert um {fit_info['scale']:.4f}")
+            parts.append(f"scaled by {fit_info['scale']:.4f}")
         if fit_info["moved"]:
-            parts.append(f"verschoben um {fit_info['offset']:.4f}")
-        _log("Korrektur: " + " und ".join(parts))
+            parts.append(f"moved by {fit_info['offset']:.4f}")
+        _log("Correction: " + " and ".join(parts))
         mesh.transform(fit)
 
     _apply_smooth_shading(context, obj)

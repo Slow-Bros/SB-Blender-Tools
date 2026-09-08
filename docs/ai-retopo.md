@@ -51,8 +51,7 @@ with the same parent and world matrix, smooth shaded, selected and active.
 
 Three Scenario models take an existing mesh and retopologize it. They differ in
 how the polygon density is controlled, which is why the panel changes with the
-selected model. The registry lives in `blender/sb_ai_retopo/models.py`; adding a
-model means adding one entry there.
+selected model.
 
 | Model | Model id | Density control | Topology |
 | --- | --- | --- | --- |
@@ -79,6 +78,38 @@ nothing to project.
 Only the Hunyuan path has run against the live API so far. The other two are
 implemented from the documented schemas and need one real run each to confirm
 their request and response shapes.
+
+## Keeping up with the API
+
+The Scenario catalogue changes over time. Two mechanisms keep the add-on usable
+without a code change.
+
+**The registry is a data file.** `blender/sb_ai_retopo/models.json` holds the
+table above: endpoint id, parameter names, ranges and the values each model uses
+for quads and triangles. Adding a model, correcting a range or dropping one that
+is gone means editing JSON, not Python. *Reload Registry* in the add-on
+preferences reads the file again without restarting Blender.
+
+Editing the file inside the installed extension works but is lost on the next
+install. *Export Model List* therefore writes a copy to the Blender config
+folder as `sb_ai_retopo_models.json`, and that copy takes precedence over the
+bundled file from then on. A malformed file never blocks the add-on: it falls
+back to the bundled file, then to a single built-in entry, and reports the
+problem in the preferences.
+
+**The catalogue can be checked against the API.** *Refresh Catalogue* fetches
+`GET /v1/models`, caches the result in the preferences and compares it with the
+registry. The preferences then list registry models the API no longer offers,
+and any model whose id or name looks like retopology but is missing from the
+registry, so a new one can be added deliberately. The panel marks a selected
+model that is gone, and a run is refused before the upload rather than failing
+afterwards. An empty or never-fetched catalogue never blocks anything.
+
+The fetch runs in a worker thread and is only ever triggered by that button.
+Drawing a panel must not cause network traffic, because Blender redraws
+constantly. The response shape of `GET /v1/models` is not contractually fixed,
+so it is parsed defensively and an unexpected shape is logged rather than
+raised.
 
 ## Pipeline
 

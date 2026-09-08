@@ -22,40 +22,46 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
         api_key, api_secret = preferences.get_credentials(context)
         if not api_key or not api_secret:
             box = layout.box()
-            box.label(text="Scenario API Key fehlt", icon="ERROR")
-            box.operator("preferences.addon_show", text="Add-on-Einstellungen").module = __package__
+            box.label(text="Scenario API key is missing", icon="ERROR")
+            box.operator("preferences.addon_show", text="Add-on Preferences").module = __package__
 
-        # -- Objekt -------------------------------------------------------
+        # -- Object -------------------------------------------------------
         box = layout.box()
         if obj is not None and obj.type == "MESH":
             box.label(text=obj.name, icon="MESH_DATA")
-            box.label(text=f"{len(obj.data.polygons):,} Faces".replace(",", "."))
+            box.label(text=f"{len(obj.data.polygons):,} faces")
         else:
-            box.label(text="Kein Mesh ausgewaehlt", icon="INFO")
+            box.label(text="No mesh selected", icon="INFO")
         if context.mode != "OBJECT":
-            box.label(text="Nur im Object Mode", icon="ERROR")
+            box.label(text="Object Mode only", icon="ERROR")
 
-        # -- Einstellungen ------------------------------------------------
+        # -- Settings -----------------------------------------------------
         col = layout.column(align=True)
         col.enabled = not running
-        col.label(text="KI-Modell")
+        col.label(text="AI Model")
         col.prop(settings, "model", text="")
-        col.separator()
 
         spec = models.get(settings.model)
-        col.label(text="Ziel-Polygone")
+        prefs = preferences.get_prefs(context)
+        available = prefs.available_ids()
+        if available and spec["id"] not in available:
+            col.label(text="Not offered by the API any more", icon="ERROR")
+
+        col.separator()
+        col.label(text="Target Polygons")
         if models.uses_count(spec):
             col.prop(settings, "target_faces", text="")
             limited = models.clamp_count(spec, settings.target_faces) != settings.target_faces
             col.label(
-                text=f"Modell erlaubt {models.count_range_label(spec)}",
+                text=f"Model accepts {models.count_range_label(spec)}",
                 icon="ERROR" if limited else "NONE",
             )
         else:
             col.prop(settings, "face_level", expand=True)
-            col.label(text="Modell kennt keine Zielzahl, nur Stufen")
+            col.label(text="This model has levels only, no target count")
+
         col.separator()
-        col.label(text="Polygone")
+        col.label(text="Polygons")
         col.prop(settings, "polygon_type", expand=True)
         col.separator()
         col.prop(settings, "hide_source")
@@ -68,12 +74,12 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
 
         layout.separator()
 
-        # -- Aktion / Status ----------------------------------------------
+        # -- Action and status --------------------------------------------
         if running:
-            layout.prop(settings, "progress", text=settings.status or "Laeuft ...", slider=True)
+            layout.prop(settings, "progress", text=settings.status or "Running ...", slider=True)
             layout.operator("sb.ai_retopo_cancel", icon="CANCEL")
         else:
-            layout.operator("sb.ai_retopo", icon="MOD_REMESH", text="KI-Retopologie starten")
+            layout.operator("sb.ai_retopo", icon="MOD_REMESH", text="Start AI Retopology")
 
         if settings.last_result:
             layout.label(text=settings.last_result, icon="CHECKMARK")

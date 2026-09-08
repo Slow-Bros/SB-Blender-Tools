@@ -7,19 +7,26 @@ from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, Po
 from . import models
 
 
+def _model_items(self, context):
+    # Callback statt fester Liste: die Registry kann zur Laufzeit neu geladen
+    # werden. Blender braucht eine Referenz auf die Strings, sonst werden sie
+    # freigegeben, deshalb der Cache am Funktionsobjekt.
+    items = models.enum_items()
+    _model_items._cache = items
+    return items or [("none", "No models", "The model registry is empty")]
+
+
 class SBAIRetopoSettings(bpy.types.PropertyGroup):
     model: EnumProperty(
-        name="KI-Modell",
-        description="Retopologie-Modell der Scenario API",
-        items=models.enum_items(),
-        default=models.DEFAULT_KEY,
+        name="AI Model",
+        description="Retopology model of the Scenario API",
+        items=_model_items,
     )
     target_faces: IntProperty(
-        name="Ziel-Polygone",
+        name="Target Polygons",
         description=(
-            "Gewuenschte Anzahl Polygone. Der erlaubte Bereich haengt vom "
-            "Modell ab und wird im Panel angezeigt; Werte ausserhalb werden "
-            "auf den Bereich begrenzt"
+            "Wanted number of polygons. The allowed range depends on the "
+            "model and is shown in the panel; values outside it are clamped"
         ),
         default=10000,
         min=100,
@@ -27,47 +34,47 @@ class SBAIRetopoSettings(bpy.types.PropertyGroup):
         step=100,
     )
     face_level: EnumProperty(
-        name="Ziel-Polygone",
+        name="Target Polygons",
         description=(
-            "Polygondichte des Ergebnisses. Wird von Modellen verwendet, die "
-            "keine Zielzahl kennen, sondern nur diese drei Stufen"
+            "Polygon density of the result. Used by models that have no "
+            "target count, only these three levels"
         ),
         items=(
-            ("low", "Low", "Starke Reduktion, wenigste Polygone"),
-            ("medium", "Medium", "Ausgewogene Reduktion"),
-            ("high", "High", "Geringe Reduktion, meiste Polygone"),
+            ("low", "Low", "Strong reduction, fewest polygons"),
+            ("medium", "Medium", "Balanced reduction"),
+            ("high", "High", "Light reduction, most polygons"),
         ),
         default="medium",
     )
     polygon_type: EnumProperty(
-        name="Polygone",
-        description="Topologie-Typ des Ergebnisses",
+        name="Polygons",
+        description="Topology type of the result",
         items=(
-            (models.QUADS, "Quads", "Viereck-Topologie (Ergebnis wird als OBJ geladen, Quads bleiben erhalten)"),
-            (models.TRIS, "Triangles", "Dreieck-Topologie"),
+            (models.QUADS, "Quads", "Quad topology (loaded as OBJ so the quads survive)"),
+            (models.TRIS, "Triangles", "Triangle topology"),
         ),
         default=models.QUADS,
     )
     pre_decimate: BoolProperty(
-        name="Pre-Dezimierung",
-        description="Sehr dichte Meshes vor dem Upload reduzieren (Upload-Limit 200 MB)",
+        name="Pre-Decimation",
+        description="Reduce very dense meshes before uploading (the API limit is 200 MB)",
         default=False,
     )
     pre_decimate_target: IntProperty(
-        name="Upload-Faces",
-        description="Ziel-Faces fuer die Pre-Dezimierung",
+        name="Upload Faces",
+        description="Target face count for the pre-decimation",
         default=200000,
         min=1000,
         soft_max=2000000,
         step=1000,
     )
     hide_source: BoolProperty(
-        name="Original ausblenden",
-        description="Original nach erfolgreichem Import im Viewport ausblenden (bleibt erhalten)",
+        name="Hide Original",
+        description="Hide the source object in the viewport after a successful import; it is kept",
         default=False,
     )
 
-    # Laufzeitstatus (nicht gespeichert relevant, nur Anzeige)
+    # Laufzeitstatus, nur zur Anzeige
     running: BoolProperty(default=False, options={"SKIP_SAVE"})
     progress: FloatProperty(default=0.0, min=0.0, max=1.0, subtype="FACTOR", options={"SKIP_SAVE"})
     status: StringProperty(default="", options={"SKIP_SAVE"})

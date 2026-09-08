@@ -38,9 +38,20 @@ from sb_ai_retopo import models, scenario_client as _sc  # noqa: E402
 assert poly == [models.QUADS, models.TRIS], poly
 # The level values must be exactly what the level-based API expects
 assert set(levels) == set(_sc.FACE_LEVELS), (levels, _sc.FACE_LEVELS)
-model_keys = [i.identifier for i in scene.sb_ai_retopo.bl_rna.properties["model"].enum_items]
-assert model_keys == [m["key"] for m in models.MODELS], model_keys
-assert scene.sb_ai_retopo.model == models.DEFAULT_KEY
+# The model enum is built from the registry at draw time, so its items are not
+# exposed through bl_rna. Check it functionally instead: every registry key must
+# be assignable, anything else must be rejected.
+assert scene.sb_ai_retopo.model == models.default_key(), scene.sb_ai_retopo.model
+for spec in models.MODELS:
+    scene.sb_ai_retopo.model = spec["key"]
+    assert scene.sb_ai_retopo.model == spec["key"], spec["key"]
+try:
+    scene.sb_ai_retopo.model = "not-a-model"
+    raise AssertionError("unknown model key must be rejected")
+except TypeError:
+    pass
+scene.sb_ai_retopo.model = models.default_key()
+model_keys = [m["key"] for m in models.MODELS]
 print(f"[TEST] registration + settings ok, models: {model_keys}")
 
 # --- model registry: every model must build a complete, valid request body
@@ -68,8 +79,60 @@ try:
     raise AssertionError("unknown polygon key must raise")
 except ValueError:
     pass
-assert models.get("does-not-exist")["key"] == models.DEFAULT_KEY
-print(f"[TEST] model registry ok: {[m['id'] for m in models.MODELS]}")
+assert models.get("does-not-exist")["key"] == models.default_key()
+assert models.LOADED_FROM.endswith("models.json"), models.LOADED_FROM
+assert not models.LOAD_ERROR, models.LOAD_ERROR
+print(f"[TEST] model registry ok from {models.LOADED_FROM}: {[m['id'] for m in models.MODELS]}")
+
+# --- registry is data: a JSON file drives it, and a broken file cannot brick it
+import json as _json  # noqa: E402
+reg_tmp = tempfile.mkdtemp(prefix="sb_registry_")
+good = os.path.join(reg_tmp, "good.json")
+with open(good, "w", encoding="utf-8") as f:
+    _json.dump({"models": [{
+        "key": "custom", "id": "model_custom-x", "label": "Custom",
+        "density": "count", "file_param": "model", "polygon_param": "topology",
+        "polygon_values": {"quads": "quad", "tris": "triangle"},
+        "count_param": "n", "count_min": 10, "count_max": 20,
+    }]}, f)
+loaded = models._read(good)
+assert loaded[0]["count_default"] == 10, loaded          # filled in from count_min
+assert loaded[0]["extra"] == {}, loaded                  # optional keys defaulted
+assert loaded[0]["description"] == "Custom", loaded
+for broken in ({"models": []},
+               {"models": [{"key": "a"}]},
+               {"models": [{**loaded[0], "count_min": 99, "count_max": 1}]},
+               {"models": [loaded[0], loaded[0]]}):
+    bad = os.path.join(reg_tmp, "bad.json")
+    with open(bad, "w", encoding="utf-8") as f:
+        _json.dump(broken, f)
+    try:
+        models._read(bad)
+        raise AssertionError(f"invalid registry accepted: {broken}")
+    except ValueError:
+        pass
+print("[TEST] registry file validation ok")
+
+# --- catalogue parsing must survive the response shape being different
+from sb_ai_retopo.scenario_client import extract_models, extract_cursor  # noqa: E402
+assert extract_models({"models": [{"id": "a", "name": "A"}]}) == [("a", "A")]
+assert extract_models({"data": [{"modelId": "b", "displayName": "B"}]}) == [("b", "B")]
+assert extract_models([{"id": "c"}]) == [("c", "")]
+assert extract_models({"unexpected": 1}) == []
+assert extract_models("nonsense") == []
+assert extract_cursor({"nextPaginationToken": "t"}) == "t"
+assert extract_cursor({"models": []}) is None
+
+# --- comparing the registry against a catalogue
+cat = [(m["id"], m["label"]) for m in models.MODELS]
+assert models.classify({i for i, _ in cat})["missing"] == []
+assert models.classify(set())["missing"] == []          # unknown catalogue accuses nobody
+gone = models.classify({models.MODELS[0]["id"]})["missing"]
+assert gone == [m["id"] for m in models.MODELS[1:]], gone
+unknown = models.unknown_candidates(cat + [("model_acme-retopo", "Acme Retopo"),
+                                           ("model_acme-texture", "Acme Texture")])
+assert unknown == [("model_acme-retopo", "Acme Retopo")], unknown
+print("[TEST] catalogue parsing + comparison ok")
 
 # --- source object: Suzanne, subdivided, transformed, with material/vertex color
 bpy.ops.mesh.primitive_monkey_add()
@@ -320,11 +383,44 @@ try:
     res = bpy.ops.sb.ai_retopo()
 except RuntimeError as e:
     # In background mode an operator ERROR report is raised as RuntimeError
-    assert "API Key" in str(e), e
+    assert "API key" in str(e), e
     res = {"CANCELLED"}
 assert res == {"CANCELLED"}, res
 assert not scene.sb_ai_retopo.running
 print("[TEST] operator credential guard ok")
+
+# --- a model the catalogue no longer offers must be refused before uploading
+prefs.api_key = "dummy-key"
+prefs.api_secret = "dummy-secret"
+prefs.set_catalogue([("model_something-else", "Other")])
+assert prefs.available_ids() == {"model_something-else"}
+for o in bpy.data.objects:
+    o.select_set(False)
+bpy.ops.mesh.primitive_cube_add()
+guard_obj = ctx.active_object
+try:
+    res = bpy.ops.sb.ai_retopo()
+except RuntimeError as e:
+    assert "not offered by the API any more" in str(e), e
+    res = {"CANCELLED"}
+assert res == {"CANCELLED"}, res
+assert "not offered" in scene.sb_ai_retopo.last_error, scene.sb_ai_retopo.last_error
+assert not scene.sb_ai_retopo.running
+# an empty catalogue must never block a run
+prefs.set_catalogue([])
+assert prefs.available_ids() == set()
+bpy.data.objects.remove(guard_obj, do_unlink=True)
+prefs.api_key = ""
+prefs.api_secret = ""
+print("[TEST] unavailable-model guard ok")
+
+# --- the registry can be exported and reloaded at runtime
+exported = models.save_user_file(os.path.join(reg_tmp, "user_copy.json"))
+assert os.path.exists(exported)
+before_reload = [m["key"] for m in models.MODELS]
+models.load()
+assert [m["key"] for m in models.MODELS] == before_reload
+print("[TEST] registry export + reload ok")
 
 addon_utils.disable("sb_ai_retopo", default_set=True)
 assert "sb_ai_retopo" not in bpy.types.Scene.bl_rna.properties

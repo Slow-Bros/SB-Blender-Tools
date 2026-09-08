@@ -17,6 +17,7 @@ import json
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 API_BASE = "https://api.cloud.scenario.com"
@@ -47,7 +48,7 @@ class ScenarioClient:
     def __init__(self, api_key, api_secret, *, cancel_event=None, log=None,
                  poll_interval=5.0, job_timeout=900.0):
         if not api_key or not api_secret:
-            raise ScenarioError("Scenario API Key/Secret fehlen.")
+            raise ScenarioError("Scenario API key and secret are missing.")
         token = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
         self._auth = f"Basic {token}"
         self._cancel = cancel_event or threading.Event()
@@ -59,7 +60,7 @@ class ScenarioClient:
 
     def _check_cancel(self):
         if self._cancel.is_set():
-            raise Cancelled("Abgebrochen")
+            raise Cancelled("Cancelled")
 
     def _sleep(self, seconds):
         end = time.monotonic() + seconds
@@ -87,11 +88,11 @@ class ScenarioClient:
                 msg = raw[:500].decode(errors="replace")
             raise ScenarioError(f"API {e.code} ({method} {path}): {msg}") from None
         except urllib.error.URLError as e:
-            raise ScenarioError(f"Verbindung fehlgeschlagen: {e.reason}") from None
+            raise ScenarioError(f"Connection failed: {e.reason}") from None
         try:
             return json.loads(raw) if raw else {}
         except json.JSONDecodeError:
-            raise ScenarioError(f"Ungueltige API-Antwort: {raw[:300]!r}") from None
+            raise ScenarioError(f"Invalid API response: {raw[:300]!r}") from None
 
     def _put(self, url, chunk):
         self._check_cancel()
@@ -103,7 +104,7 @@ class ScenarioClient:
         except urllib.error.HTTPError as e:
             raise ScenarioError(f"Upload PUT {e.code}: {e.read()[:200]!r}") from None
         except urllib.error.URLError as e:
-            raise ScenarioError(f"Upload fehlgeschlagen: {e.reason}") from None
+            raise ScenarioError(f"Upload failed: {e.reason}") from None
 
     def _download(self, url):
         self._check_cancel()
@@ -119,9 +120,9 @@ class ScenarioClient:
                     chunks.append(block)
                 return b"".join(chunks)
         except urllib.error.HTTPError as e:
-            raise ScenarioError(f"Download fehlgeschlagen: HTTP {e.code}") from None
+            raise ScenarioError(f"Download failed: HTTP {e.code}") from None
         except urllib.error.URLError as e:
-            raise ScenarioError(f"Download fehlgeschlagen: {e.reason}") from None
+            raise ScenarioError(f"Download failed: {e.reason}") from None
 
     # -- Upload ---------------------------------------------------------
 
@@ -129,11 +130,11 @@ class ScenarioClient:
         """Laedt eine 3D-Datei hoch und gibt die Asset-ID zurueck."""
         if len(data) > MAX_UPLOAD_BYTES:
             raise ScenarioError(
-                f"Datei zu gross ({len(data) / 1024 / 1024:.0f} MB, Limit 200 MB). "
-                "Pre-Dezimierung aktivieren."
+                f"File too large ({len(data) / 1024 / 1024:.0f} MB, limit is 200 MB). "
+                "Enable pre-decimation."
             )
         parts_count = max(1, -(-len(data) // PART_SIZE))
-        self._log(f"Upload {file_name}: {len(data) / 1024 / 1024:.1f} MB in {parts_count} Teil(en)")
+        self._log(f"Upload {file_name}: {len(data) / 1024 / 1024:.1f} MB in {parts_count} part(s)")
 
         init = self._request("POST", "/v1/uploads", {
             "fileName": file_name,
@@ -146,7 +147,7 @@ class ScenarioClient:
         upload_id = upload.get("id")
         parts = upload.get("parts") or []
         if not upload_id or not parts:
-            raise ScenarioError(f"Upload-Init fehlgeschlagen: {json.dumps(init)[:300]}")
+            raise ScenarioError(f"Upload init failed: {json.dumps(init)[:300]}")
 
         for i, part in enumerate(parts):
             start = i * PART_SIZE
@@ -163,12 +164,43 @@ class ScenarioClient:
             upload = res.get("upload") or res
             status = upload.get("status")
             asset_id = upload.get("entityId") or upload.get("assetId") or upload.get("asset_id")
-            self._log(f"Upload-Status: {status}")
+            self._log(f"Upload status: {status}")
             if status in ("imported", "validated", "completed") and asset_id:
                 return asset_id
             if status in ("failed", "error"):
-                raise ScenarioError(f"Upload-Validierung fehlgeschlagen: {json.dumps(upload)[:300]}")
-        raise ScenarioError("Upload-Import: Zeitueberschreitung (5 min)")
+                raise ScenarioError(f"Upload validation failed: {json.dumps(upload)[:300]}")
+        raise ScenarioError("Upload import timed out after 5 minutes.")
+
+    # -- Modellkatalog ---------------------------------------------------
+
+    def list_models(self, max_pages=20):
+        """Holt den Modellkatalog ueber GET /v1/models.
+
+        Die Antwortform ist nicht vertraglich zugesichert, deshalb wird
+        tolerant geparst und bei Bedarf paginiert.
+
+        Returns: Liste von (id, name)
+        """
+        found = []
+        seen = set()
+        cursor = None
+        for _ in range(max_pages):
+            path = "/v1/models?pageSize=100"
+            if cursor:
+                path += f"&paginationToken={urllib.parse.quote(str(cursor))}"
+            res = self._request("GET", path)
+            page = extract_models(res)
+            if not page and not found:
+                self._log(f"Unexpected /v1/models response: {json.dumps(res)[:300]}")
+            for model_id, name in page:
+                if model_id not in seen:
+                    seen.add(model_id)
+                    found.append((model_id, name))
+            cursor = extract_cursor(res)
+            if not cursor:
+                break
+        self._log(f"Model catalogue: {len(found)} entries")
+        return found
 
     # -- Retopologie-Job -------------------------------------------------
 
@@ -179,12 +211,12 @@ class ScenarioClient:
         eigene Parameternamen hat.
         """
         if not model_id:
-            raise ScenarioError("Kein Modell angegeben.")
+            raise ScenarioError("No model given.")
         self._log(f"Generate {model_id}: {json.dumps(body)}")
         res = self._request("POST", f"/v1/generate/custom/{model_id}", body)
         job_id = extract_job_id(res)
         if not job_id:
-            raise ScenarioError(f"Keine Job-ID in Antwort: {json.dumps(res)[:300]}")
+            raise ScenarioError(f"No job id in response: {json.dumps(res)[:300]}")
         return job_id
 
     def wait_for_job(self, job_id, on_poll=None):
@@ -204,8 +236,8 @@ class ScenarioClient:
                 history = job.get("statusHistory") or []
                 last = history[-1] if history and isinstance(history[-1], dict) else {}
                 reason = job.get("error") or job.get("message") or last.get("reason") or status
-                raise ScenarioError(f"Job fehlgeschlagen: {reason}")
-        raise ScenarioError(f"Zeitueberschreitung: Job nach {self.job_timeout / 60:.0f} min nicht fertig")
+                raise ScenarioError(f"Job failed: {reason}")
+        raise ScenarioError(f"Timed out: job did not finish within {self.job_timeout / 60:.0f} minutes")
 
     def download_job_mesh(self, job_result):
         """Laedt das 3D-Ergebnis eines Jobs. Bevorzugt OBJ (Quads), sonst GLB.
@@ -214,7 +246,7 @@ class ScenarioClient:
         """
         asset_ids = extract_asset_ids(job_result)
         if not asset_ids:
-            raise ScenarioError(f"Keine Ergebnis-Asset-ID: {json.dumps(job_result)[:400]}")
+            raise ScenarioError(f"No result asset id: {json.dumps(job_result)[:400]}")
 
         infos = []
         for aid in asset_ids:
@@ -224,17 +256,60 @@ class ScenarioClient:
 
         chosen = pick_mesh_asset(infos)
         if chosen is None:
-            raise ScenarioError("Kein 3D-Asset im Job-Ergebnis gefunden")
+            raise ScenarioError("No 3D asset found in the job result")
 
         aid, asset = chosen
         mime = asset.get("mimeType") or asset.get("contentType") or ""
-        self._log(f"Download Asset {aid} ({mime or 'unbekannt'})")
+        self._log(f"Downloading asset {aid} ({mime or 'unknown'})")
         data = self._download(asset["url"])
         ext = MIME_TO_EXT.get(mime) or detect_extension(data)
         return data, ext
 
 
 # -- Hilfsfunktionen (reine Datenverarbeitung, testbar ohne Netz) --------
+
+def extract_models(res):
+    """Liest (id, name) aus einer /v1/models-Antwort.
+
+    Akzeptiert eine nackte Liste oder ein Objekt mit 'models', 'data' oder
+    'items', weil die genaue Form nicht dokumentiert ist.
+    """
+    if isinstance(res, list):
+        entries = res
+    elif isinstance(res, dict):
+        entries = None
+        for key in ("models", "data", "items", "results"):
+            value = res.get(key)
+            if isinstance(value, list):
+                entries = value
+                break
+        if entries is None:
+            return []
+    else:
+        return []
+
+    found = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        model_id = entry.get("id") or entry.get("modelId") or entry.get("model_id")
+        if not model_id:
+            continue
+        name = entry.get("name") or entry.get("displayName") or entry.get("title") or ""
+        found.append((str(model_id), str(name)))
+    return found
+
+
+def extract_cursor(res):
+    """Cursor fuer die naechste Seite, falls die Antwort einen mitliefert."""
+    if not isinstance(res, dict):
+        return None
+    for key in ("nextPaginationToken", "paginationToken", "nextCursor", "cursor", "nextPageToken"):
+        value = res.get(key)
+        if value:
+            return value
+    return None
+
 
 def extract_job_id(res):
     job = res.get("job") or {}

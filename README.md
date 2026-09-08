@@ -25,6 +25,12 @@ SBTools/
 
 Target: Blender 4.2+ extension format (`blender_manifest.toml`); currently developed against Blender 5.x.
 
+## Conventions
+
+- **User-facing text is English.** Panel labels, property names and tooltips,
+  status and error messages, console output and documentation. Code comments may
+  be German.
+
 ## Branches
 
 - `develop` — integration branch, all work and pull requests go here
