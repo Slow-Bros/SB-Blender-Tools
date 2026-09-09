@@ -332,18 +332,6 @@ def remove_vertices(mesh, mask):
     return len(indices)
 
 
-def bbox_without_outliers(mesh):
-    """Bounding-Box eines Meshes ohne abseits liegende Fragmente.
-
-    Duenne Huelle um analyze_parts, damit Aufrufer nur die Box brauchen.
-
-    Returns: (lo, hi, info) mit info = {parts, outlier_parts, outlier_fraction, filtered}
-    """
-    a = analyze_parts(mesh)
-    info = {k: a[k] for k in ("parts", "outlier_parts", "outlier_fraction", "filtered")}
-    return a["lo"], a["hi"], info
-
-
 def fit_matrix(src_lo, src_hi, res_lo, res_hi):
     """Sicherheitsnetz-Korrektur des Ergebnisses auf die Quell-Bounding-Box.
 
@@ -382,7 +370,7 @@ def fit_matrix(src_lo, src_hi, res_lo, res_hi):
     return matrix, info
 
 
-def _import_file(context, path):
+def _import_file(path):
     """Importiert OBJ/GLB und gibt die neu erzeugten Objekte zurueck."""
     ext = os.path.splitext(path)[1].lower()
     before = set(bpy.data.objects)
@@ -480,19 +468,6 @@ def face_stats(mesh):
     return {"faces": len(mesh.polygons), "quads": quads, "tris": tris, "ngons": ngons}
 
 
-def world_bbox(context, obj):
-    """Welt-Bounding-Box der evaluierten Geometrie eines Objekts.
-
-    Wie in Phototron ueber die Ecken der lokalen Box, damit beide Objekte
-    identisch gemessen werden.
-    """
-    lo, hi = local_bbox(context, obj)
-    pts = [obj.matrix_world @ Vector((x, y, z))
-           for x in (lo.x, hi.x) for y in (lo.y, hi.y) for z in (lo.z, hi.z)]
-    return (Vector([min(p[i] for p in pts) for i in range(3)]),
-            Vector([max(p[i] for p in pts) for i in range(3)]))
-
-
 def import_result(context, path, source_obj, *, name=None, hide_source=False,
                   remove_fragments=True):
     """Importiert das Retopo-Ergebnis und legt es als neues Objekt neben dem
@@ -509,7 +484,7 @@ def import_result(context, path, source_obj, *, name=None, hide_source=False,
     """
     src_lo, src_hi = local_bbox(context, source_obj)
 
-    new_objects = _import_file(context, path)
+    new_objects = _import_file(path)
     obj = _consolidate(context, new_objects)
     mesh = obj.data
 

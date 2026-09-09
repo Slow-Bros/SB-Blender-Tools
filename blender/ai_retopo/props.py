@@ -8,12 +8,12 @@ from . import models
 
 
 def _model_items(self, context):
-    # Callback statt fester Liste: die Registry kann zur Laufzeit neu geladen
-    # werden. Blender braucht eine Referenz auf die Strings, sonst werden sie
+    # Callback statt fester Liste, weil die Items aus models.json kommen.
+    # Blender braucht eine Referenz auf die Strings, sonst werden sie
     # freigegeben, deshalb der Cache am Funktionsobjekt.
     items = models.enum_items()
     _model_items._cache = items
-    return items or [("none", "No models", "The model registry is empty")]
+    return items
 
 
 class SBAIRetopoSettings(bpy.types.PropertyGroup):

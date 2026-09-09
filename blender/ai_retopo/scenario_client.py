@@ -17,7 +17,6 @@ import json
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 
 API_BASE = "https://api.cloud.scenario.com"
@@ -26,7 +25,7 @@ PART_SIZE = 5 * 1024 * 1024
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # Limit der Hunyuan-Modelle
 REQUEST_TIMEOUT = 60
 
-POLYGON_TYPES = ("quadrilateral", "triangle")
+# Stufen der level-basierten Modelle; das Panel-Enum muss genau diese kennen
 FACE_LEVELS = ("low", "medium", "high")
 
 MIME_TO_EXT = {

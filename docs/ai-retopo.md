@@ -78,9 +78,8 @@ identified instead of failing as an opaque unknown file.
 
 **Meshy Remesh has never completed a run.** It was removed once on the
 assumption that the account lacks a Meshy plan, which was never confirmed
-against an API response. The per-id check reports it, so it is back in the
-registry and can be tried. If a run fails, the API message in the panel finally
-says why.
+against an API response. It is in the registry and can be tried. If a run fails,
+the API message in the panel finally says why.
 
 ## Changing the model list
 

@@ -24,7 +24,7 @@ import addon_utils  # noqa: E402
 bpy.ops.wm.read_factory_settings(use_empty=True)
 mod = addon_utils.enable("ai_retopo", default_set=True, persistent=False)
 assert mod is not None, "add-on failed to enable"
-from ai_retopo import mesh_io, scenario_client, preferences  # noqa: E402
+from ai_retopo import mesh_io, models, preferences, scenario_client  # noqa: E402
 
 ctx = bpy.context
 scene = ctx.scene
@@ -34,15 +34,14 @@ levels = [i.identifier for i in scene.sb_ai_retopo.bl_rna.properties["face_level
 assert levels == ["low", "medium", "high"], levels
 assert scene.sb_ai_retopo.face_level == "medium"
 poly = [i.identifier for i in scene.sb_ai_retopo.bl_rna.properties["polygon_type"].enum_items]
-from ai_retopo import models, scenario_client as _sc  # noqa: E402
-
 assert poly == [models.QUADS, models.TRIS], poly
 # The level values must be exactly what the level-based API expects
-assert set(levels) == set(_sc.FACE_LEVELS), (levels, _sc.FACE_LEVELS)
+assert set(levels) == set(scenario_client.FACE_LEVELS), (levels, scenario_client.FACE_LEVELS)
 # The model enum is built from the registry at draw time, so its items are not
 # exposed through bl_rna. Check it functionally instead: every registry key must
 # be assignable, anything else must be rejected.
-assert scene.sb_ai_retopo.model == models.default_key(), scene.sb_ai_retopo.model
+first_key = models.MODELS[0]["key"]
+assert scene.sb_ai_retopo.model == first_key, scene.sb_ai_retopo.model
 for spec in models.MODELS:
     scene.sb_ai_retopo.model = spec["key"]
     assert scene.sb_ai_retopo.model == spec["key"], spec["key"]
@@ -51,7 +50,7 @@ try:
     raise AssertionError("unknown model key must be rejected")
 except TypeError:
     pass
-scene.sb_ai_retopo.model = models.default_key()
+scene.sb_ai_retopo.model = first_key
 model_keys = [m["key"] for m in models.MODELS]
 print(f"[TEST] registration + settings ok, models: {model_keys}")
 
@@ -80,10 +79,11 @@ try:
     raise AssertionError("unknown polygon key must raise")
 except ValueError:
     pass
-assert models.get("does-not-exist")["key"] == models.default_key()
+assert models.get("does-not-exist")["key"] == first_key
 assert not models.LOAD_ERROR, models.LOAD_ERROR
-assert "model_meshy-remesh" in models.known_ids(), "Meshy is back in the registry"
-print(f"[TEST] model registry ok from {models.LOADED_FROM}: {[m['id'] for m in models.MODELS]}")
+model_ids = [m["id"] for m in models.MODELS]
+assert "model_meshy-remesh" in model_ids, "Meshy is back in the registry"
+print(f"[TEST] model registry ok: {model_ids}")
 
 # --- registry is data: a JSON file drives it, and a broken file cannot brick it
 import json as _json  # noqa: E402
@@ -97,7 +97,6 @@ with open(good, "w", encoding="utf-8") as f:
         "count_param": "n", "count_min": 10, "count_max": 20,
     }]}, f)
 loaded = models._read(good)
-assert loaded[0]["count_default"] == 10, loaded          # filled in from count_min
 assert loaded[0]["extra"] == {}, loaded                  # optional keys defaulted
 assert loaded[0]["description"] == "Custom", loaded
 for broken in ({"models": []},
@@ -193,7 +192,6 @@ obj_path = os.path.join(tmp, "retopo_result.obj")
 bpy.ops.wm.obj_export(filepath=obj_path, export_selected_objects=True, export_materials=False)
 bpy.data.objects.remove(sim, do_unlink=True)
 
-settings = scene.sb_ai_retopo
 new, stats = mesh_io.import_result(ctx, obj_path, src)
 ctx.view_layer.update()
 assert new.name == "Scan_retopo", new.name
@@ -208,6 +206,12 @@ def world_bbox(o):
     pts = [o.matrix_world @ Vector((x, y, z)) for x in (lo.x, hi.x) for y in (lo.y, hi.y) for z in (lo.z, hi.z)]
     return (Vector([min(p[i] for p in pts) for i in range(3)]),
             Vector([max(p[i] for p in pts) for i in range(3)]))
+
+
+def bbox_without_outliers(mesh):
+    """Bounding box of the main part only, plus the part statistics."""
+    a = mesh_io.analyze_parts(mesh)
+    return a["lo"], a["hi"], {k: a[k] for k in ("parts", "outlier_parts", "outlier_fraction", "filtered")}
 
 
 slo, shi = world_bbox(src)
@@ -248,7 +252,7 @@ ctx.view_layer.update()
 # Only the cube sticks out of the head's box, so only it may be excluded.
 assert stats3["parts"] == 4, stats3
 assert stats3["outlier_parts"] == 1 and stats3["filtered"], stats3
-mlo, mhi, _ = mesh_io.bbox_without_outliers(new3.data)
+mlo, mhi, _ = bbox_without_outliers(new3.data)
 pts = [new3.matrix_world @ Vector((x, y, z))
        for x in (mlo.x, mhi.x) for y in (mlo.y, mhi.y) for z in (mlo.z, mhi.z)]
 mlo_w = Vector([min(p[i] for p in pts) for i in range(3)])
@@ -279,7 +283,7 @@ m, fi = mesh_io.fit_matrix(lo0, hi0, lo0 + Vector((0.5, 0, 0)), hi0 + Vector((0.
 assert m is not None and fi["moved"] and not fi["scaled"], fi
 print("[TEST] fit_matrix tolerances ok")
 
-# --- bbox_without_outliers: a few stray faces must not inflate the measurement
+# --- analyze_parts: a few stray faces must not inflate the measurement
 bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=16, location=(0, 0, 0))
 sphere = ctx.active_object
 bpy.ops.mesh.primitive_cube_add(size=0.05, location=(10, 0, 0))
@@ -288,11 +292,11 @@ with ctx.temp_override(object=sphere, active_object=sphere, selected_objects=[sp
                        selected_editable_objects=[sphere, fragment]):
     bpy.ops.object.join()
 full_lo, full_hi = mesh_io._mesh_bbox(sphere.data)
-main_lo, main_hi, pinfo = mesh_io.bbox_without_outliers(sphere.data)
+main_lo, main_hi, pinfo = bbox_without_outliers(sphere.data)
 assert pinfo["parts"] == 2 and pinfo["filtered"], pinfo
 assert (full_hi - full_lo).length > 9.0, "full bbox should be inflated by the fragment"
 assert (main_hi - main_lo).length < 3.6, (main_lo, main_hi)
-print(f"[TEST] bbox_without_outliers ok: {pinfo}")
+print(f"[TEST] main-part bbox ok: {pinfo}")
 
 # --- regression: a result with stray faces must still land on the original
 #     (this is the Medium failure Amalia hit in Blender)
@@ -301,7 +305,7 @@ sphere.select_set(True)
 ctx.view_layer.objects.active = sphere
 stray_path = os.path.join(tmp, "retopo_stray.obj")
 sm = sphere.data
-s_lo, s_hi = mesh_io.bbox_without_outliers(sm)[:2]
+s_lo, s_hi = bbox_without_outliers(sm)[:2]
 s_center = (s_lo + s_hi) * 0.5
 sm.transform(Matrix.Scale(1.0 / max(s_hi - s_lo), 4) @ Matrix.Translation(-s_center))
 bpy.ops.wm.obj_export(filepath=stray_path, export_selected_objects=True, export_materials=False)
@@ -319,7 +323,7 @@ fixed, fstats = mesh_io.import_result(ctx, stray_path, src2, name="Ball_retopo",
 ctx.view_layer.update()
 assert fstats["parts"] == 2 and fstats["filtered"], fstats
 b_lo, b_hi = world_bbox(src2)
-f_lo, f_hi = mesh_io.bbox_without_outliers(fixed.data)[:2]
+f_lo, f_hi = bbox_without_outliers(fixed.data)[:2]
 f_pts = [fixed.matrix_world @ Vector((x, y, z))
          for x in (f_lo.x, f_hi.x) for y in (f_lo.y, f_hi.y) for z in (f_lo.z, f_hi.z)]
 fw_lo = Vector([min(p[i] for p in f_pts) for i in range(3)])
@@ -427,8 +431,8 @@ assert norm_stats["fitted"], "a normalized result must be corrected"
 assert norm_stats["world_ok"], norm_stats
 assert norm_stats["world_residual"] < 1e-3, norm_stats
 # the object scale must not be counted twice: world size follows the original
-s_lo, s_hi = mesh_io.world_bbox(ctx, norm_src)
-n2_lo, n2_hi = mesh_io.world_bbox(ctx, norm_obj)
+s_lo, s_hi = world_bbox(norm_src)
+n2_lo, n2_hi = world_bbox(norm_obj)
 assert (s_hi - s_lo - (n2_hi - n2_lo)).length < 1e-3, ((s_hi - s_lo), (n2_hi - n2_lo))
 print(f"[TEST] normalized result corrected, world residual {norm_stats['world_residual']:.2e}")
 bpy.data.objects.remove(norm_obj, do_unlink=True)

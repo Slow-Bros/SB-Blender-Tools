@@ -1,11 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Add-on-Einstellungen: Zugangsdaten und Verbindungsparameter.
 
-Hier stand einmal ein ganzer Abschnitt zur Modellverwaltung: Abgleich mit der
-API, Pruefung einzelner IDs, Export und Neuladen der Modell-Datei. Er bediente
-im Kern nur das Bearbeiten dieser Datei von Hand und ist deshalb entfernt. Die
-Modell-Liste ist eine JSON-Datei im Add-on; eine kaputte Datei meldet das
-Panel, ein fehlgeschlagener Job zeigt die API-Meldung im Klartext.
+Die Modell-Liste hat hier bewusst keine Oberflaeche, siehe docs/ai-retopo.md
+("Changing the model list").
 """
 
 import os

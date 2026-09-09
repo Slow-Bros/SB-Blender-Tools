@@ -44,13 +44,9 @@ def _worker(job, api_key, api_secret, glb_path, model_spec, request_body, poll_i
     def emit(kind, **data):
         job.events.put((kind, data))
 
-    def log(msg):
-        _log(msg)
-        emit("log", message=msg)
-
     try:
         client = ScenarioClient(
-            api_key, api_secret, cancel_event=job.cancel, log=log,
+            api_key, api_secret, cancel_event=job.cancel, log=_log,
             poll_interval=poll_interval, job_timeout=job_timeout,
         )
         with open(glb_path, "rb") as f:
@@ -62,13 +58,13 @@ def _worker(job, api_key, api_secret, glb_path, model_spec, request_body, poll_i
             on_progress=lambda p: emit("progress", value=0.08 + p * 0.10,
                                        message=f"Uploading ... {int(p * 100)}%"),
         )
-        log(f"Asset: {asset_id}")
+        _log(f"Asset: {asset_id}")
 
         emit("progress", value=0.22, message=f"Starting job ({model_spec['label']}) ...")
         body = dict(request_body)
         body[model_spec["file_param"]] = asset_id
         job_id = client.start_generation(model_spec["id"], body)
-        log(f"Job: {job_id}")
+        _log(f"Job: {job_id}")
 
         def on_poll(count, status, progress):
             frac = progress if isinstance(progress, (int, float)) and 0 <= progress <= 1 else None
@@ -83,7 +79,7 @@ def _worker(job, api_key, api_secret, glb_path, model_spec, request_body, poll_i
         out_path = os.path.join(job.temp_dir, f"retopo_result{ext}")
         with open(out_path, "wb") as f:
             f.write(mesh_bytes)
-        log(f"Result: {out_path} ({len(mesh_bytes) / 1024:.0f} KB)")
+        _log(f"Result: {out_path} ({len(mesh_bytes) / 1024:.0f} KB)")
         emit("done", path=out_path)
     except Cancelled:
         emit("cancelled")
@@ -202,8 +198,6 @@ class SB_OT_ai_retopo(bpy.types.Operator):
             if kind == "progress":
                 settings.progress = data["value"]
                 settings.status = data["message"]
-            elif kind == "log":
-                pass
             elif kind == "done":
                 job.result_path = data["path"]
                 return self._import(context, job)

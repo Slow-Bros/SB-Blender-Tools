@@ -46,7 +46,6 @@ FALLBACK_MODELS = [
 
 MODELS = []
 LOAD_ERROR = ""
-LOADED_FROM = ""
 
 
 def _validate(entry):
@@ -67,7 +66,6 @@ def _validate(entry):
                 raise ValueError(f"'{entry['key']}' is missing '{key}'")
         if entry["count_min"] > entry["count_max"]:
             raise ValueError(f"'{entry['key']}' has count_min above count_max")
-        entry.setdefault("count_default", entry["count_min"])
     else:
         entry.setdefault("level_param", "faceLevel")
 
@@ -97,15 +95,13 @@ def _read(path):
 
 def load():
     """Laedt die Registry aus models.json, mit eingebautem Notnagel."""
-    global MODELS, LOAD_ERROR, LOADED_FROM
+    global MODELS, LOAD_ERROR
     try:
         MODELS = _read(BUNDLED_FILE)
         LOAD_ERROR = ""
-        LOADED_FROM = BUNDLED_FILE
         return MODELS
     except Exception as e:  # noqa: BLE001 - eine kaputte Datei darf nichts blockieren
         MODELS = [dict(m) for m in FALLBACK_MODELS]
-        LOADED_FROM = "built-in fallback"
         LOAD_ERROR = str(e)
         print(f"[SB-AI-RETOPO] Model registry unusable, falling back: {e}")
         return MODELS
@@ -114,20 +110,16 @@ def load():
 load()
 
 
-def default_key():
-    return MODELS[0]["key"] if MODELS else ""
-
-
 def get(key):
-    """Modell-Spezifikation zu einem Schluessel, Fallback auf das erste Modell."""
+    """Modell-Spezifikation zu einem Schluessel, Fallback auf das erste Modell.
+
+    MODELS ist nie leer: _read lehnt eine leere Liste ab und load() setzt
+    sonst den Notnagel ein.
+    """
     for spec in MODELS:
         if spec["key"] == key:
             return spec
-    return MODELS[0] if MODELS else dict(FALLBACK_MODELS[0])
-
-
-def known_ids():
-    return {spec["id"] for spec in MODELS}
+    return MODELS[0]
 
 
 def enum_items():
@@ -157,7 +149,7 @@ def build_request(spec, asset_id, polygon_key, *, face_level=None, target_faces=
 
     polygon_key ist QUADS oder TRIS und wird auf den Wert des jeweiligen
     Modells abgebildet. Je nach Modell wird entweder face_level oder
-    target_faces verwendet.
+    target_faces verwendet; ein count-Modell braucht target_faces.
     """
     if polygon_key not in (QUADS, TRIS):
         raise ValueError(f"unknown topology key: {polygon_key}")
@@ -166,8 +158,6 @@ def build_request(spec, asset_id, polygon_key, *, face_level=None, target_faces=
     body[spec["polygon_param"]] = spec["polygon_values"][polygon_key]
 
     if uses_count(spec):
-        if target_faces is None:
-            target_faces = spec["count_default"]
         body[spec["count_param"]] = clamp_count(spec, target_faces)
     else:
         body[spec["level_param"]] = face_level or "medium"

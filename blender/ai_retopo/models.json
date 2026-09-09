@@ -44,7 +44,6 @@
       "count_param": "targetPolycount",
       "count_min": 100,
       "count_max": 300000,
-      "count_default": 30000,
       "extra": {
         "resizeHeight": 0,
         "originAt": "empty"
@@ -65,7 +64,6 @@
       "count_param": "faceLimit",
       "count_min": 1000,
       "count_max": 20000,
-      "count_default": 10000,
       "extra": {
         "bake": false
       }
