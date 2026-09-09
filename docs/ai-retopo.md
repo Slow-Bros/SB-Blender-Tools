@@ -139,6 +139,27 @@ the information that matters when something goes wrong.
 The worker thread never touches `bpy`; it communicates via a queue that a modal
 operator drains on a timer.
 
+## Cancelling
+
+Cancel stops the add-on, not the job. Before the job starts it is a real abort,
+there is nothing running yet. Afterwards the job runs to the end at Scenario and
+spends its credits either way; the add-on only stops collecting the result.
+
+That is not for lack of an endpoint. Scenario has one — `POST
+/v1/jobs/{id}/action` with `{"action": "cancel"}`, the same action pattern the
+upload uses for `complete` — and the reference notes that "Today only cancel on
+inference jobs is supported". A retopology job is not one of those. Tried in
+September 2026 against a running Hunyuan job, the API answered:
+
+```
+400 {"reason": "Cannot cancel this type of job. Action not permitted."}
+```
+
+All three models go through `/v1/generate/custom/{id}`, so this is not specific
+to Hunyuan. The wording of both the docs and the error suggests the job type may
+be allowed later. If it is, sending that one request from the cancel path is the
+whole change — worth retesting before building anything larger around it.
+
 ## Placement
 
 The result is placed by giving the new object the source object's world matrix,
