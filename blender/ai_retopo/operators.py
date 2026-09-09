@@ -6,18 +6,14 @@ import queue
 import shutil
 import tempfile
 import threading
+import time
 import traceback
 
 import bpy
 
 from . import mesh_io, models, preferences
+from .log import log
 from .scenario_client import Cancelled, ScenarioClient, ScenarioError
-
-LOG_PREFIX = "[SB-AI-RETOPO]"
-
-
-def _log(msg):
-    print(f"{LOG_PREFIX} {msg}")
 
 
 class _Job:
@@ -39,14 +35,15 @@ def is_running():
     return _job is not None and _job.thread is not None and _job.thread.is_alive()
 
 
-def _worker(job, api_key, api_secret, glb_path, model_spec, request_body, poll_interval, job_timeout):
+def _worker(job, api_key, api_secret, glb_path, model_spec, polygon_key, face_level,
+            target_faces, poll_interval, job_timeout):
     """Laeuft im Thread. Kommuniziert nur ueber job.events, kein bpy."""
     def emit(kind, **data):
         job.events.put((kind, data))
 
     try:
         client = ScenarioClient(
-            api_key, api_secret, cancel_event=job.cancel, log=_log,
+            api_key, api_secret, cancel_event=job.cancel, log=log,
             poll_interval=poll_interval, job_timeout=job_timeout,
         )
         with open(glb_path, "rb") as f:
@@ -58,19 +55,26 @@ def _worker(job, api_key, api_secret, glb_path, model_spec, request_body, poll_i
             on_progress=lambda p: emit("progress", value=0.08 + p * 0.10,
                                        message=f"Uploading ... {int(p * 100)}%"),
         )
-        _log(f"Asset: {asset_id}")
+        log(f"Asset: {asset_id}")
 
         emit("progress", value=0.22, message=f"Starting job ({model_spec['label']}) ...")
-        body = dict(request_body)
-        body[model_spec["file_param"]] = asset_id
+        body = models.build_request(model_spec, asset_id, polygon_key,
+                                    face_level=face_level, target_faces=target_faces)
         job_id = client.start_generation(model_spec["id"], body)
-        _log(f"Job: {job_id}")
+        log(f"Job: {job_id}")
+
+        started = time.monotonic()
 
         def on_poll(count, status, progress):
-            frac = progress if isinstance(progress, (int, float)) and 0 <= progress <= 1 else None
-            if frac is None:
-                frac = min(count * poll_interval / job_timeout, 0.95)
-            emit("progress", value=0.25 + frac * 0.60, message=f"Retopology running ... ({status})")
+            # Die API meldet selten einen Fortschritt. Ohne ihn bleibt der
+            # Balken stehen und die Laufzeit steht im Text, statt aus dem
+            # Timeout einen Fortschritt zu erfinden.
+            elapsed = int(time.monotonic() - started)
+            text = f"Retopology running ... {elapsed // 60}:{elapsed % 60:02d} ({status})"
+            value = 0.25
+            if isinstance(progress, (int, float)) and 0 <= progress <= 1:
+                value += progress * 0.60
+            emit("progress", value=value, message=text)
 
         result = client.wait_for_job(job_id, on_poll=on_poll)
 
@@ -79,14 +83,14 @@ def _worker(job, api_key, api_secret, glb_path, model_spec, request_body, poll_i
         out_path = os.path.join(job.temp_dir, f"retopo_result{ext}")
         with open(out_path, "wb") as f:
             f.write(mesh_bytes)
-        _log(f"Result: {out_path} ({len(mesh_bytes) / 1024:.0f} KB)")
+        log(f"Result: {out_path} ({len(mesh_bytes) / 1024:.0f} KB)")
         emit("done", path=out_path)
     except Cancelled:
         emit("cancelled")
     except ScenarioError as e:
         emit("error", message=str(e))
     except Exception as e:  # noqa: BLE001 - alles melden, Thread darf nicht still sterben
-        _log(traceback.format_exc())
+        log(traceback.format_exc())
         emit("error", message=f"{type(e).__name__}: {e}")
 
 
@@ -105,6 +109,7 @@ class SB_OT_ai_retopo(bpy.types.Operator):
             obj is not None and obj.type == "MESH"
             and context.mode == "OBJECT"
             and not is_running()
+            and not models.LOAD_ERROR
         )
 
     def execute(self, context):
@@ -118,13 +123,6 @@ class SB_OT_ai_retopo(bpy.types.Operator):
 
         source = context.active_object
         spec = models.get(settings.model)
-
-        # asset_id wird erst nach dem Upload im Worker eingesetzt
-        request_body = models.build_request(
-            spec, "", settings.polygon_type,
-            face_level=settings.face_level,
-            target_faces=settings.target_faces,
-        )
 
         job = _Job()
         job.temp_dir = tempfile.mkdtemp(prefix="sb_ai_retopo_", dir=bpy.app.tempdir or None)
@@ -158,15 +156,18 @@ class SB_OT_ai_retopo(bpy.types.Operator):
         else:
             density = f"level {settings.face_level}"
 
-        _log(
+        log(
             f"Export: {info['faces']} faces raw, {info['faces_clean']} after cleanup, "
             f"{info['faces_exported']} uploaded, {info['bytes'] / 1024 / 1024:.1f} MB | "
             f"{spec['label']}, {density}, {settings.polygon_type}"
         )
 
+        # Der Body entsteht erst im Worker, wenn die Asset-ID da ist; hier
+        # gehen nur einfache Werte mit, kein bpy-Zustand.
         job.thread = threading.Thread(
             target=_worker,
-            args=(job, api_key, api_secret, glb_path, spec, request_body,
+            args=(job, api_key, api_secret, glb_path, spec,
+                  settings.polygon_type, settings.face_level, settings.target_faces,
                   float(prefs.poll_interval), prefs.job_timeout_minutes * 60.0),
             daemon=True,
             name="sb_ai_retopo",
@@ -234,7 +235,7 @@ class SB_OT_ai_retopo(bpy.types.Operator):
                 remove_fragments=settings.remove_fragments,
             )
         except Exception as e:  # noqa: BLE001
-            _log(traceback.format_exc())
+            log(traceback.format_exc())
             settings.last_error = f"Import failed: {e}"
             self.report({"ERROR"}, settings.last_error)
             return self._finish(context)
@@ -243,7 +244,7 @@ class SB_OT_ai_retopo(bpy.types.Operator):
         if stats["ngons"]:
             summary += f", {stats['ngons']} n-gons"
         settings.last_result = summary
-        _log(summary)
+        log(summary)
 
         notes = []
         if stats["fragments_removed"]:
@@ -266,7 +267,7 @@ class SB_OT_ai_retopo(bpy.types.Operator):
         if notes:
             warning = " ".join(notes)
             settings.last_warning = warning
-            _log(warning)
+            log(warning)
             self.report({"WARNING"}, warning)
         else:
             settings.last_warning = ""

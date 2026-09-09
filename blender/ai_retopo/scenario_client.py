@@ -52,8 +52,6 @@ class Cancelled(ScenarioError):
 class ScenarioClient:
     def __init__(self, api_key, api_secret, *, cancel_event=None, log=None,
                  poll_interval=5.0, job_timeout=900.0):
-        if not api_key or not api_secret:
-            raise ScenarioError("Scenario API key and secret are missing.")
         token = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
         self._auth = f"Basic {token}"
         self._cancel = cancel_event or threading.Event()

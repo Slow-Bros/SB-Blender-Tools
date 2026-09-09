@@ -9,11 +9,9 @@ korrigiert und bekommt dessen Welt-Matrix.
 
 Die Korrektur folgt Phototron (bakeTexturesBlender in
 apps/desktop/public/ipc/retopology.js): verglichen wird die Diagonale der Box,
-korrigiert wird ab einem Prozent Abweichung. Zusaetzlich wird das Ergebnis am
-Ende in Weltkoordinaten gegen das Original nachgemessen. Diese Nachmessung ist
-die eigentliche Wahrheit, denn sie beschreibt, was im Viewport zu sehen ist.
-Weicht sie ab, steht das im Log und im Panel, statt still ausgeliefert zu
-werden.
+korrigiert wird ab einem Prozent Abweichung. Am Ende wird auf den Vertex-Daten
+nachgemessen, ob die Korrektur auch angekommen ist; weicht sie ab, steht das
+im Log und im Panel, statt still ausgeliefert zu werden.
 """
 
 import os
@@ -23,7 +21,7 @@ import bpy
 import numpy as np
 from mathutils import Matrix, Vector
 
-LOG_PREFIX = "[SB-AI-RETOPO]"
+from .log import log
 
 # Toleranzen der Bounding-Box-Pruefung, uebernommen aus Phototron
 SCALE_TOLERANCE = 0.01   # 1 % Abweichung der Box-Diagonale
@@ -37,10 +35,6 @@ OUTLIER_MARGIN = 0.1
 # Sicherung: stellen die aussortierten Teile mehr als diesen Anteil der
 # Geometrie, ist das kein Fragment mehr und es wird alles gemessen
 MAX_OUTLIER_FRACTION = 0.1
-
-
-def _log(message):
-    print(f"{LOG_PREFIX} {message}")
 
 
 class MeshIOError(Exception):
@@ -95,12 +89,12 @@ def export_object_for_upload(context, obj, glb_path, decimate_target=0):
     mesh.name = f"{obj.name}_sb_upload"
     faces_before = len(mesh.polygons)
 
-    # Farb-Attribute und Materialien entfernen (nur Geometrie wird gebraucht,
-    # eingebettete Texturen wuerden die GLB sonst riesig machen)
+    # Farb-Attribute und Materialien am Mesh entfernen statt ueber Exporter-
+    # Optionen: die Optionsnamen dafuer haben sich zwischen Blender-Versionen
+    # geaendert, ein Mesh ohne die Daten braucht sie nicht. UVs und Normalen
+    # laesst der Exporter ueber stabile Optionen weg.
     for attr in list(mesh.color_attributes):
         mesh.color_attributes.remove(attr)
-    for uv in list(mesh.uv_layers):
-        mesh.uv_layers.remove(uv)
     mesh.materials.clear()
 
     # Cleanup vor der Dezimierung, Reihenfolge wie in Phototron
@@ -109,7 +103,7 @@ def export_object_for_upload(context, obj, glb_path, decimate_target=0):
     if faces_clean == 0:
         bpy.data.meshes.remove(mesh)
         raise MeshIOError(f"'{obj.name}' has no faces left after the cleanup.")
-    _log(
+    log(
         f"Cleanup: {faces_before} -> {faces_clean} faces, removed "
         f"{cleanup['verts_removed']} duplicate and {cleanup['loose_removed']} loose vertices"
     )
@@ -130,7 +124,7 @@ def export_object_for_upload(context, obj, glb_path, decimate_target=0):
         temp.select_set(True)
         context.view_layer.objects.active = temp
 
-        kwargs = dict(
+        result = bpy.ops.export_scene.gltf(
             filepath=glb_path,
             export_format="GLB",
             use_selection=True,
@@ -143,23 +137,12 @@ def export_object_for_upload(context, obj, glb_path, decimate_target=0):
             export_skins=False,
             export_morph=False,
         )
-        # Versionsabhaengige Optionen defensiv setzen
-        props = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
-        for key, value in (
-            ("export_vertex_color", "NONE"),
-            ("export_image_format", "NONE"),
-            ("export_extras", False),
-            ("export_lights", False),
-            ("export_cameras", False),
-        ):
-            if key in props:
-                kwargs[key] = value
-
-        result = bpy.ops.export_scene.gltf(**kwargs)
         if "FINISHED" not in result:
             raise MeshIOError(f"glTF export failed: {result}")
 
-        faces_exported = min(faces_clean, decimate_target) if decimate_target else faces_clean
+        # Was nach der Dezimierung tatsaechlich rausging, messen statt schaetzen
+        depsgraph = context.evaluated_depsgraph_get()
+        faces_exported = len(temp.evaluated_get(depsgraph).data.polygons)
     finally:
         for o in prev_selected:
             try:
@@ -188,11 +171,12 @@ def export_object_for_upload(context, obj, glb_path, decimate_target=0):
 
 # -- Import ---------------------------------------------------------------
 
-def _mesh_bbox(mesh):
+def _mesh_bbox(mesh, exclude=None):
     """Bounding-Box (min, max) aus den Vertex-Koordinaten eines Meshes.
 
     Bewusst nicht Object.bound_box: das liefert bei Subdivision-Modifiern nur
     die Bounds des Kontroll-Cages, nicht der evaluierten Geometrie.
+    exclude: optionales bool-Array ueber die Vertices, die nicht mitzaehlen.
     """
     n = len(mesh.vertices)
     if n == 0:
@@ -200,6 +184,8 @@ def _mesh_bbox(mesh):
     co = np.empty(n * 3, dtype=np.float32)
     mesh.vertices.foreach_get("co", co)
     co = co.reshape(-1, 3)
+    if exclude is not None:
+        co = co[~exclude]
     return Vector(co.min(axis=0).tolist()), Vector(co.max(axis=0).tolist())
 
 
@@ -215,27 +201,34 @@ def local_bbox(context, obj):
 
 
 def connected_components(mesh):
-    """Labelt jeden Vertex mit der Wurzel seiner Zusammenhangskomponente."""
+    """Labelt jeden Vertex mit der Wurzel seiner Zusammenhangskomponente.
+
+    Vektorisiert statt einer Python-Schleife ueber jede Kante: pro Runde
+    haengt sich die groessere Wurzel jeder Kante an die kleinere (Hooking),
+    danach werden die Ketten plattgedrueckt, bis jeder Vertex direkt auf seine
+    Wurzel zeigt (Pointer-Jumping). Das konvergiert in wenigen Runden.
+    """
     n = len(mesh.vertices)
-    edge_verts = np.empty(len(mesh.edges) * 2, dtype=np.int32)
-    mesh.edges.foreach_get("vertices", edge_verts)
+    edges = np.empty(len(mesh.edges) * 2, dtype=np.int64)
+    mesh.edges.foreach_get("vertices", edges)
+    a, b = edges[0::2], edges[1::2]
 
-    parent = list(range(n))
-
-    def find(x):
-        root = x
-        while parent[root] != root:
-            root = parent[root]
-        while parent[x] != root:
-            parent[x], x = root, parent[x]
-        return root
-
-    pairs = edge_verts.reshape(-1, 2).tolist()
-    for a, b in pairs:
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[ra] = rb
-    return np.fromiter((find(i) for i in range(n)), dtype=np.int32, count=n)
+    parent = np.arange(n, dtype=np.int64)
+    while True:
+        ra, rb = parent[a], parent[b]
+        differ = ra != rb
+        if not differ.any():
+            return parent
+        lo = np.minimum(ra[differ], rb[differ])
+        hi = np.maximum(ra[differ], rb[differ])
+        # Bei mehreren Kanten an derselben Wurzel gewinnt irgendeine kleinere;
+        # jede ist gueltig, da immer nach unten gehaengt wird (kein Zyklus).
+        parent[hi] = lo
+        while True:
+            grand = parent[parent]
+            if np.array_equal(grand, parent):
+                break
+            parent = grand
 
 
 def analyze_parts(mesh):
@@ -437,6 +430,12 @@ def _consolidate(context, new_objects):
 
 
 def _apply_smooth_shading(context, obj):
+    """Alles glatt schattieren.
+
+    Seit Blender 4.1 sind Flat-Faces das Attribut sharp_face und harte Kanten
+    sharp_edge; ohne die Attribute gilt alles als glatt. Der OBJ-Import legt
+    Smooth-Groups als sharp_edge ab, deshalb muss auch das weg.
+    """
     mesh = obj.data
     try:
         with context.temp_override(object=obj, active_object=obj, selected_objects=[obj],
@@ -444,28 +443,19 @@ def _apply_smooth_shading(context, obj):
             bpy.ops.mesh.customdata_custom_splitnormals_clear()
     except Exception:
         pass
-    for p in mesh.polygons:
-        p.use_smooth = True
-    # OBJ-Import setzt Smooth-Groups als scharfe Kanten -> entfernen
-    sharp = mesh.attributes.get("sharp_edge")
-    if sharp is not None:
-        mesh.attributes.remove(sharp)
-    sharp_face = mesh.attributes.get("sharp_face")
-    if sharp_face is not None:
-        mesh.attributes.remove(sharp_face)
+    for name in ("sharp_face", "sharp_edge"):
+        attr = mesh.attributes.get(name)
+        if attr is not None:
+            mesh.attributes.remove(attr)
 
 
 def face_stats(mesh):
-    quads = tris = ngons = 0
-    for p in mesh.polygons:
-        n = len(p.vertices)
-        if n == 4:
-            quads += 1
-        elif n == 3:
-            tris += 1
-        else:
-            ngons += 1
-    return {"faces": len(mesh.polygons), "quads": quads, "tris": tris, "ngons": ngons}
+    n = len(mesh.polygons)
+    sizes = np.empty(n, dtype=np.int32)
+    mesh.polygons.foreach_get("loop_total", sizes)
+    quads = int(np.count_nonzero(sizes == 4))
+    tris = int(np.count_nonzero(sizes == 3))
+    return {"faces": n, "quads": quads, "tris": tris, "ngons": n - quads - tris}
 
 
 def import_result(context, path, source_obj, *, name=None, hide_source=False,
@@ -476,11 +466,12 @@ def import_result(context, path, source_obj, *, name=None, hide_source=False,
     Groesse und Lage werden immer gegen das Original geprueft und korrigiert,
     nach dem Rezept aus Phototron (bakeTexturesBlender): verglichen wird die
     Diagonale der Bounding-Box, korrigiert wird ab einem Prozent Abweichung.
-    Zum Schluss wird das Ergebnis in Weltkoordinaten gegen das Original
-    nachgemessen und protokolliert, damit eine falsche Korrektur auffaellt
-    statt still auszuliefern.
+    Zum Schluss wird auf den Vertex-Daten nachgemessen und protokolliert, damit
+    eine falsche Korrektur auffaellt statt still auszuliefern.
 
-    Returns: (new_object, stats_dict)
+    Returns: (new_object, stats) mit stats = faces, quads, tris, ngons, fitted,
+    parts, outlier_parts, filtered, fragments_removed, world_ok,
+    world_residual, world_centre_offset
     """
     src_lo, src_hi = local_bbox(context, source_obj)
 
@@ -488,10 +479,11 @@ def import_result(context, path, source_obj, *, name=None, hide_source=False,
     obj = _consolidate(context, new_objects)
     mesh = obj.data
 
+    # part_info beschreibt, was gefunden wurde, auch wenn danach entfernt wird
     analysis = analyze_parts(mesh)
     part_info = {k: analysis[k] for k in ("parts", "outlier_parts", "outlier_fraction", "filtered")}
     if part_info["parts"] > 1:
-        _log(
+        log(
             f"Result consists of {part_info['parts']} separate parts, "
             f"{part_info['outlier_parts']} of them outliers "
             f"({part_info['outlier_fraction'] * 100:.2f}% of the vertices)"
@@ -500,27 +492,26 @@ def import_result(context, path, source_obj, *, name=None, hide_source=False,
     removed = 0
     if remove_fragments and analysis["outlier_mask"] is not None:
         removed = remove_vertices(mesh, analysis["outlier_mask"])
-        _log(f"Removed {removed} vertices of {part_info['outlier_parts']} stray fragment(s)")
+        log(f"Removed {removed} vertices of {part_info['outlier_parts']} stray fragment(s)")
         analysis = analyze_parts(mesh)
-    part_info["fragments_removed"] = removed
 
     res_lo, res_hi = analysis["lo"], analysis["hi"]
     fit, fit_info = fit_matrix(src_lo, src_hi, res_lo, res_hi)
-    _log(
+    log(
         f"Bounding box: source {fit_info['src_diag']:.4f}, result {fit_info['res_diag']:.4f}, "
         f"factor {fit_info['scale']:.6f}, offset {fit_info['offset']:.4f}"
     )
 
     applied = False
     if fit is None:
-        _log("Size and position match the original, nothing to correct")
+        log("Size and position match the original, nothing to correct")
     else:
         parts = []
         if fit_info["scaled"]:
             parts.append(f"scaled by {fit_info['scale']:.4f}")
         if fit_info["moved"]:
             parts.append(f"moved by {fit_info['offset']:.4f}")
-        _log("Correction: " + " and ".join(parts))
+        log("Correction: " + " and ".join(parts))
         mesh.transform(fit)
         applied = True
 
@@ -555,50 +546,41 @@ def import_result(context, path, source_obj, *, name=None, hide_source=False,
     except RuntimeError:
         pass
 
-    # Nachmessen. Bewusst nicht ueber die Welt-Box: deren Ausdehnung haengt
-    # bei gedrehten Objekten von der Form ab, zwei gleich grosse Objekte
-    # unterschiedlicher Proportion ergaeben dort verschiedene Werte. Geprueft
-    # werden stattdessen zwei rotationsunabhaengige Invarianten.
-    context.view_layer.update()
-    check = analyze_parts(mesh)
-    res_diag = (check["hi"] - check["lo"]).length
+    # Nachmessen auf den Vertex-Daten, nicht auf dem, was fit_matrix
+    # ausgerechnet hat: das bestaetigt, dass die Korrektur im Mesh angekommen
+    # ist. Bewusst im lokalen Raum: eine Welt-Box aendert bei gedrehten
+    # Objekten mit der Form ihre Ausdehnung. Behaltene Ausreisser zaehlen
+    # nicht mit, sonst waere die Messung dieselbe Luege wie ohne Filter.
+    lo, hi = _mesh_bbox(mesh, exclude=analysis["outlier_mask"])
+    res_diag = (hi - lo).length
     src_diag = (src_hi - src_lo).length
     size_ratio = res_diag / src_diag if src_diag > 1e-12 else 1.0
-    centre_off = ((src_lo + src_hi) - (check["lo"] + check["hi"])).length * 0.5
-
-    matrix_delta = max(
-        abs(a - b)
-        for row_a, row_b in zip(obj.matrix_world, source_obj.matrix_world)
-        for a, b in zip(row_a, row_b)
-    )
+    centre_off = ((src_lo + src_hi) - (lo + hi)).length * 0.5
     size_ok = abs(size_ratio - 1.0) <= SCALE_TOLERANCE
     centre_ok = centre_off <= src_diag * OFFSET_TOLERANCE
-    matrix_ok = matrix_delta < 1e-5
-    ok = size_ok and centre_ok and matrix_ok
 
-    src_world = (source_obj.matrix_world.to_scale()[0] * src_diag)
-    _log(
+    log(
         f"Check: local diagonal original {src_diag:.4f}, result {res_diag:.4f} "
         f"(ratio {size_ratio:.6f}), centre off {centre_off:.4f}, "
-        f"object scale {tuple(round(v, 4) for v in source_obj.scale)}, "
-        f"world diagonal about {src_world:.4f}"
+        f"object scale {tuple(round(v, 4) for v in source_obj.scale)}"
     )
-    if not ok:
+    if not (size_ok and centre_ok):
         reasons = []
         if not size_ok:
             reasons.append(f"size ratio {size_ratio:.4f}")
         if not centre_ok:
             reasons.append(f"centre off {centre_off:.4f}")
-        if not matrix_ok:
-            reasons.append(f"transform differs by {matrix_delta:.6f}")
-        _log("Check FAILED: " + ", ".join(reasons))
+        log("Check FAILED: " + ", ".join(reasons))
 
     stats = face_stats(mesh)
-    stats["world_residual"] = abs(size_ratio - 1.0)
-    stats["world_centre_offset"] = centre_off
-    stats["world_ok"] = ok
-    stats["fitted"] = applied
-    # Abweichung ohne angewandte Korrektur: das Panel warnt darauf hin
-    stats.update(fit_info)
-    stats.update(part_info)
+    stats.update({
+        "fitted": applied,
+        "parts": part_info["parts"],
+        "outlier_parts": part_info["outlier_parts"],
+        "filtered": part_info["filtered"],
+        "fragments_removed": removed,
+        "world_ok": size_ok and centre_ok,
+        "world_residual": abs(size_ratio - 1.0),
+        "world_centre_offset": centre_off,
+    })
     return obj, stats

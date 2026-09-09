@@ -164,7 +164,7 @@ assert len(dirty.data.vertices) == 10, "cleanup must not touch the source object
 bpy.data.objects.remove(dirty, do_unlink=True)
 print(f"[TEST] pre-upload cleanup ok: {info3['cleanup']}")
 
-# --- fit_matrix: diagonal comparison with a one percent tolerance
+# --- fit_matrix: Phototron's one percent tolerance, measured on the diagonal
 lo, hi = Vector((0, 0, 0)), Vector((2, 1, 1))
 m, i = mesh_io.fit_matrix(lo, hi, lo, hi)
 assert m is None and not i["scaled"] and not i["moved"], i
@@ -173,6 +173,11 @@ assert m is None, i
 m, i = mesh_io.fit_matrix(lo, hi, lo, hi * 0.5)    # 100 % off, must be corrected
 assert m is not None and i["scaled"] and i["moved"], i
 assert (m @ lo - lo).length < 1e-6 and (m @ (hi * 0.5) - hi).length < 1e-6
+m, i = mesh_io.fit_matrix(lo, hi, lo * 0.95, hi * 0.95)  # 5 % off, must be corrected
+assert m is not None and i["scaled"], i
+shift = Vector((0.5, 0, 0))
+m, i = mesh_io.fit_matrix(lo, hi, lo + shift, hi + shift)  # moved, not scaled
+assert m is not None and i["moved"] and not i["scaled"], i
 print("[TEST] fit_matrix tolerance ok")
 
 # --- simulate API result: re-import our own GLB, normalize to unit cube (as
@@ -270,18 +275,6 @@ assert len(cm.vertices) == 3 and len(cm.polygons) == 1, (len(cm.vertices), len(c
 assert cleanup["verts_removed"] == 1 and cleanup["loose_removed"] == 1, cleanup
 bpy.data.meshes.remove(cm)
 print(f"[TEST] cleanup_mesh ok: {cleanup}")
-
-# --- fit_matrix: Phototron's one percent tolerance, measured on the diagonal
-lo0, hi0 = Vector((-1, -1, -1)), Vector((1, 1, 1))
-m, fi = mesh_io.fit_matrix(lo0, hi0, lo0, hi0)
-assert m is None and not fi["scaled"] and not fi["moved"], fi
-m, fi = mesh_io.fit_matrix(lo0, hi0, lo0 * 0.995, hi0 * 0.995)
-assert m is None, f"0.5 percent must stay untouched: {fi}"
-m, fi = mesh_io.fit_matrix(lo0, hi0, lo0 * 0.95, hi0 * 0.95)
-assert m is not None and fi["scaled"], f"5 percent must be corrected: {fi}"
-m, fi = mesh_io.fit_matrix(lo0, hi0, lo0 + Vector((0.5, 0, 0)), hi0 + Vector((0.5, 0, 0)))
-assert m is not None and fi["moved"] and not fi["scaled"], fi
-print("[TEST] fit_matrix tolerances ok")
 
 # --- analyze_parts: a few stray faces must not inflate the measurement
 bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=16, location=(0, 0, 0))
@@ -485,11 +478,6 @@ picked = scenario_client.pick_mesh_asset([
     ("o", {"mimeType": "model/obj", "url": "u2", "kind": "3d"}),
 ])
 assert picked[0] == "o"
-try:
-    scenario_client.ScenarioClient("", "")
-    raise AssertionError("missing credentials must raise")
-except scenario_client.ScenarioError:
-    pass
 print("[TEST] client parsers ok")
 
 # Operator poll / credentials guard. Earlier blocks deleted their objects, so

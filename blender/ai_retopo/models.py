@@ -13,6 +13,9 @@ Quelle: docs.scenario.com, Endpunkt /v1/generate/custom/{model_id}.
 
 import json
 import os
+import zlib
+
+from .log import log
 
 # Art der Dichtesteuerung
 DENSITY_LEVEL = "level"  # nur low / medium / high
@@ -27,20 +30,22 @@ BUNDLED_FILE = os.path.join(os.path.dirname(__file__), "models.json")
 REQUIRED_KEYS = ("key", "id", "label", "density", "file_param",
                  "polygon_param", "polygon_values")
 
-# Notnagel, falls models.json fehlt oder unbrauchbar ist. Das Add-on bleibt
-# damit bedienbar, statt beim Registrieren auszusteigen.
+# Platzhalter, falls models.json fehlt oder unbrauchbar ist: Panel und Enum
+# haben damit etwas anzuzeigen, das Add-on registriert sich trotzdem. Einen
+# Job startet der Operator damit nicht (poll prueft LOAD_ERROR), die id ist
+# bewusst leer.
 FALLBACK_MODELS = [
     {
-        "key": "hunyuan_polygen",
-        "id": "model_tencent-smarttopology",
-        "label": "Hunyuan PolyGen 1.5",
-        "description": "Tencent Hunyuan PolyGen 1.5, three density levels",
+        "key": "registry_broken",
+        "id": "",
+        "label": "Model list unusable",
+        "description": "models.json could not be read, see the panel",
         "density": DENSITY_LEVEL,
         "file_param": "file3d",
         "polygon_param": "polygonType",
         "polygon_values": {QUADS: "quadrilateral", TRIS: "triangle"},
         "level_param": "faceLevel",
-        "extra": {"geometryFileFormat": "obj"},
+        "extra": {},
     },
 ]
 
@@ -82,6 +87,7 @@ def _read(path):
         raise ValueError("no 'models' list in file")
     result = []
     seen = set()
+    numbers = {}
     for entry in entries:
         if not isinstance(entry, dict):
             raise ValueError("model entry is not an object")
@@ -89,6 +95,10 @@ def _read(path):
         if entry["key"] in seen:
             raise ValueError(f"duplicate model key '{entry['key']}'")
         seen.add(entry["key"])
+        number = enum_number(entry["key"])
+        if number in numbers:
+            raise ValueError(f"enum number of '{entry['key']}' collides with '{numbers[number]}'")
+        numbers[number] = entry["key"]
         result.append(entry)
     return result
 
@@ -103,11 +113,8 @@ def load():
     except Exception as e:  # noqa: BLE001 - eine kaputte Datei darf nichts blockieren
         MODELS = [dict(m) for m in FALLBACK_MODELS]
         LOAD_ERROR = str(e)
-        print(f"[SB-AI-RETOPO] Model registry unusable, falling back: {e}")
+        log(f"Model registry unusable: {e}")
         return MODELS
-
-
-load()
 
 
 def get(key):
@@ -122,9 +129,22 @@ def get(key):
     return MODELS[0]
 
 
+def enum_number(key):
+    """Stabile Nummer eines Modells fuer die EnumProperty.
+
+    Blender speichert die Auswahl als Integer in der .blend-Datei. Ohne feste
+    Nummer waere das der Listenindex, und ein Umsortieren von models.json
+    wuerde in gespeicherten Szenen still ein anderes Modell auswaehlen. Die
+    CRC des Schluessels ist deterministisch und braucht kein Feld in der Datei;
+    _read prueft, dass keine zwei Schluessel dieselbe Nummer bekommen.
+    """
+    return zlib.crc32(key.encode()) & 0x7FFFFFFF
+
+
 def enum_items():
-    """Items fuer die EnumProperty im Panel."""
-    return tuple((m["key"], m["label"], m["description"]) for m in MODELS)
+    """Items fuer die EnumProperty im Panel: (id, name, description, icon, number)."""
+    return tuple((m["key"], m["label"], m["description"], "NONE", enum_number(m["key"]))
+                 for m in MODELS)
 
 
 def uses_count(spec):
@@ -164,3 +184,7 @@ def build_request(spec, asset_id, polygon_key, *, face_level=None, target_faces=
 
     body.update(spec.get("extra", {}))
     return body
+
+
+# Am Ende, weil _read auf enum_number zugreift
+load()

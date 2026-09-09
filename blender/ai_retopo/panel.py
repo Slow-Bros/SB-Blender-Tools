@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """N-Panel (Sidebar) im 3D-Viewport, Tab 'SBTools'."""
 
+import textwrap
+
 import bpy
 
 from . import models, preferences
@@ -22,7 +24,7 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
         if models.LOAD_ERROR:
             box = layout.box()
             box.alert = True
-            box.label(text="Model list unusable, using the built-in fallback", icon="ERROR")
+            box.label(text="Model list unusable, fix models.json and restart", icon="ERROR")
             box.label(text=models.LOAD_ERROR[:60], icon="BLANK1")
 
         api_key, api_secret = preferences.get_credentials(context)
@@ -79,7 +81,7 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
 
         # -- Action and status --------------------------------------------
         if running:
-            layout.prop(settings, "progress", text=settings.status or "Running ...", slider=True)
+            layout.progress(text=settings.status or "Running ...", factor=settings.progress, type="BAR")
             layout.operator("sb.ai_retopo_cancel", icon="CANCEL")
         else:
             layout.operator("sb.ai_retopo", icon="MOD_REMESH", text="Start AI Retopology")
@@ -88,27 +90,13 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
             layout.label(text=settings.last_result, icon="CHECKMARK")
         if settings.last_warning:
             box = layout.box()
-            for i, line in enumerate(_wrap(settings.last_warning, 42)):
+            for i, line in enumerate(textwrap.wrap(settings.last_warning, 42)):
                 box.label(text=line, icon="ERROR" if i == 0 else "BLANK1")
         if settings.last_error:
             box = layout.box()
             box.alert = True
-            for i, line in enumerate(_wrap(settings.last_error, 42)):
+            for i, line in enumerate(textwrap.wrap(settings.last_error, 42)):
                 box.label(text=line, icon="ERROR" if i == 0 else "BLANK1")
-
-
-def _wrap(text, width):
-    words = text.split()
-    lines, current = [], ""
-    for w in words:
-        if len(current) + len(w) + 1 > width and current:
-            lines.append(current)
-            current = w
-        else:
-            current = f"{current} {w}".strip()
-    if current:
-        lines.append(current)
-    return lines or [text]
 
 
 def register():

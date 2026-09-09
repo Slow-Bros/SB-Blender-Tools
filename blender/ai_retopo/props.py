@@ -21,6 +21,9 @@ class SBAIRetopoSettings(bpy.types.PropertyGroup):
         name="AI Model",
         description="Retopology model of the Scenario API",
         items=_model_items,
+        # Dynamische Enums brauchen den Default als Nummer; ohne ihn steht die
+        # Property auf 0, und das ist keine der Modell-Nummern.
+        default=models.enum_number(models.MODELS[0]["key"]),
     )
     target_faces: IntProperty(
         name="Target Polygons",

@@ -1,10 +1,9 @@
 # AI Retopo (Blender add-on)
 
 Blender port of the AI retopology step from the Phototron desktop app
-(`apps/desktop/public/ipc/retopology.js`). The active mesh is sent to the
-Scenario API (Tencent Hunyuan PolyGen 1.5, model `model_tencent-smarttopology`),
-retopologized, and imported back as a **new object at the position of the
-original**. The original object is never modified.
+(`apps/desktop/public/ipc/retopology.js`). The active mesh is sent to one of the
+retopology models on the Scenario API (see *Models* below), retopologized, and
+imported back as a **new object at the position of the original**. The original object is never modified.
 
 Location: `blender/ai_retopo/` — Blender 4.2+ extension (`blender_manifest.toml`),
 developed and tested against Blender 5.2.
@@ -104,8 +103,13 @@ detour are worth keeping:
   `sb_ai_retopo_models.json` in the Blender config folder is ignored and can be
   deleted.
 
-A broken `models.json` never blocks the add-on: it falls back to a single
-built-in Hunyuan entry, says so in the panel, and logs the reason.
+A broken `models.json` does not break the add-on: it still registers, the panel
+shows the reason, and the Start button stays disabled until the file is fixed
+and Blender restarted.
+
+The model dropdown stores its choice in the `.blend` file as a number derived
+from the model key, not as the position in the list. Reordering or removing
+entries therefore never silently switches a saved scene to a different model.
 
 Whether a model actually works for an account is answered by running it. A
 failed job shows the API message verbatim in the panel and the console, which is
@@ -114,8 +118,8 @@ the information that matters when something goes wrong.
 ## Pipeline
 
 1. **Export** (main thread): evaluated copy of the active object, modifiers
-   applied, materials, colour attributes and UVs stripped, object transform
-   reset to identity. The copy then gets the same cleanup Phototron runs in
+   applied, materials and colour attributes stripped, object transform reset
+   to identity. The copy then gets the same cleanup Phototron runs in
    `convertObjToGlb`: merge duplicate vertices at 0.0001, delete loose geometry
    that has no faces, recalculate normals outwards. Optional pre-decimation runs
    after that, and the result is written to a temporary GLB.
@@ -148,14 +152,14 @@ source diagonal. Worth knowing about the original: Phototron aligns only the
 throwaway copy it bakes with. The retopo file it hands the user is the raw API
 result, so the alignment there is a safety net for baking, not the main path.
 
-Every run verifies itself afterwards and writes the numbers to the system
-console: the local bounding-box diagonals of source and result, their ratio, the
-centre offset, and the source object's scale. Three invariants must hold, and
-they are checked rather than assumed:
+Every run measures the corrected mesh afterwards, on its vertex data rather than
+on the numbers the correction was computed from, and writes the result to the
+system console: the local bounding-box diagonals of source and result, their
+ratio, the centre offset, and the source object's scale. Two invariants must
+hold:
 
 - the diagonal ratio is one, within one percent
 - the centres coincide, within one percent of the diagonal
-- the new object's world matrix equals the source's
 
 A failure is written to the console and shown in the panel instead of being
 delivered silently. The check deliberately compares in local space. A world

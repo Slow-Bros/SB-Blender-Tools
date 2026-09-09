@@ -18,9 +18,9 @@ SBTools/
 
 ## Add-ons
 
-- **AI Retopo** (`blender/ai_retopo`) — sends the active mesh to the
-  Scenario API (Hunyuan PolyGen 1.5), imports the retopologized result as a new
-  object at the original's position. Sidebar tab *SBTools* in the 3D viewport.
+- **AI Retopo** (`blender/ai_retopo`) — sends the active mesh to a retopology
+  model on the Scenario API (Hunyuan PolyGen, Meshy Remesh or Tripo), imports
+  the result as a new object at the original's position. Sidebar tab *SBTools* in the 3D viewport.
   Setup and details: [docs/ai-retopo.md](docs/ai-retopo.md).
 
 Target: Blender 4.2+ extension format (`blender_manifest.toml`); currently developed against Blender 5.x.
