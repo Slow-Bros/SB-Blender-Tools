@@ -6,7 +6,8 @@ Run:  blender -b --python scripts/test_ai_retopo_headless.py
 Covers: registration, pre-upload cleanup, GLB export of a transformed object,
 import of a simulated (normalized) result, the bounding-box safety net with its
 one percent tolerance, stray fragments being ignored during measurement,
-placement on the original, and the pure-python API response parsers.
+placement on the original, the pure-python API response parsers, and the job
+history with its project handover.
 """
 import os
 import sys
@@ -24,7 +25,7 @@ import addon_utils  # noqa: E402
 bpy.ops.wm.read_factory_settings(use_empty=True)
 mod = addon_utils.enable("ai_retopo", default_set=True, persistent=False)
 assert mod is not None, "add-on failed to enable"
-from ai_retopo import mesh_io, models, preferences, scenario_client  # noqa: E402
+from ai_retopo import history, mesh_io, models, panel, preferences, scenario_client  # noqa: E402
 
 ctx = bpy.context
 scene = ctx.scene
@@ -479,6 +480,69 @@ picked = scenario_client.pick_mesh_asset([
 ])
 assert picked[0] == "o"
 print("[TEST] client parsers ok")
+
+# --- history: written the moment the job id exists, because that is the only
+# thing that survives a crash. Redirected to a temp folder so the test never
+# touches the real history.
+hist_dir = tempfile.mkdtemp(prefix="sb_history_")
+history.directory = lambda: hist_dir
+history.new_session()
+assert history.entries(force=True) == []
+
+history.add("job_1", name="Scan_retopo", model="Hunyuan PolyGen 1.5",
+            source_object="Scan", blend_file="")
+entry = history.get("job_1")
+assert entry["status"] == history.STATUS_RUNNING, entry
+assert entry["size_mb"] == 0.0, entry
+# no project yet, so the entry remembers which document it belongs to
+assert entry["session"] == history.SESSION, entry
+history.update("job_1", status=history.STATUS_FINISHED, size_mb=1.25)
+assert history.get("job_1")["status"] == history.STATUS_FINISHED
+assert history.get("job_1")["size_mb"] == 1.25
+# A small result must not round down to zero, that is the "not downloaded" value
+history.update("job_1", size_mb=round(5000 / 1024 / 1024, 6))
+assert history.get("job_1")["size_mb"] > 0.0, history.get("job_1")
+assert panel._pretty_size(history.get("job_1")["size_mb"]) == "5 KB"
+assert panel._pretty_size(0.0) == "size unknown"
+assert panel._pretty_size(1.5) == "1.50 MB"
+history.update("job_1", size_mb=1.25)
+
+# Saving claims the unsaved jobs of this document only. A second document
+# (File > New, or another Blender instance) must not adopt them.
+history.add("job_2", name="Other_retopo", model="Tripo Retopology",
+            source_object="Other", blend_file="")
+history.new_session()
+history.add("job_3", name="Third_retopo", model="Tripo Retopology",
+            source_object="Third", blend_file="")
+assert history.claim_unsaved("C:/projects/haus.blend") == 1
+assert history.get("job_3")["blend_file"] == "C:/projects/haus.blend"
+assert history.get("job_3")["session"] == ""
+assert history.get("job_1")["blend_file"] == "", "another document must not be claimed"
+assert len(history.for_project("C:/projects/haus.blend")) == 1
+assert len(history.for_project("")) == 2
+
+# The panel list is built from the file, filtered by project
+scene.sb_ai_retopo.history_this_project = False
+assert history.sync(ctx) == 3
+assert {i.name for i in ctx.window_manager.sb_ai_retopo_history} == {
+    "Scan_retopo", "Other_retopo", "Third_retopo"}
+assert {i.model for i in ctx.window_manager.sb_ai_retopo_history} == {
+    "Hunyuan PolyGen 1.5", "Tripo Retopology"}
+scene.sb_ai_retopo.history_this_project = True
+# this file was never saved, so only the two jobs without a project show
+assert history.sync(ctx) == 2, [i.name for i in ctx.window_manager.sb_ai_retopo_history]
+
+# Oldest entries fall out instead of growing without end
+for n in range(history.MAX_ENTRIES + 5):
+    history.add(f"bulk_{n}", name=f"Bulk_{n}", model="Tripo Retopology",
+                source_object="Bulk", blend_file="C:/projects/haus.blend")
+assert len(history.entries(force=True)) == history.MAX_ENTRIES
+
+# A damaged file must not raise, the add-on starts a new history instead
+with open(history.path(), "w", encoding="utf-8") as f:
+    f.write("{ this is not json")
+assert history.entries(force=True) == []
+print("[TEST] history ok")
 
 # Operator poll / credentials guard. Earlier blocks deleted their objects, so
 # make the source mesh active again first.

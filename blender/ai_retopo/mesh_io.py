@@ -458,6 +458,41 @@ def face_stats(mesh):
     return {"faces": n, "quads": quads, "tris": tris, "ngons": n - quads - tris}
 
 
+def import_unplaced(context, path, name):
+    """Importiert das Ergebnis ohne Bezug auf ein Original.
+
+    Nur fuer den Nachimport aus der Historie, wenn das Quellobjekt nicht mehr
+    existiert: ohne es gibt es keine Bounding-Box zum Vergleichen, also auch
+    keine Korrektur von Groesse und Lage. Das Objekt landet so, wie das Modell
+    es geliefert hat, und der Aufrufer sagt das im Panel.
+    """
+    obj = _consolidate(context, _import_file(path))
+    _apply_smooth_shading(context, obj)
+    obj.name = name
+    obj.data.name = name
+    obj.data.materials.clear()
+    for o in context.view_layer.objects:
+        if o.select_get():
+            o.select_set(False)
+    try:
+        obj.select_set(True)
+        context.view_layer.objects.active = obj
+    except RuntimeError:
+        pass
+    stats = face_stats(obj.data)
+    stats.update({
+        "fitted": False,
+        "parts": analyze_parts(obj.data)["parts"],
+        "outlier_parts": 0,
+        "filtered": False,
+        "fragments_removed": 0,
+        "world_ok": True,
+        "world_residual": 0.0,
+        "world_centre_offset": 0.0,
+    })
+    return obj, stats
+
+
 def import_result(context, path, source_obj, *, name=None, hide_source=False,
                   remove_fragments=True):
     """Importiert das Retopo-Ergebnis und legt es als neues Objekt neben dem

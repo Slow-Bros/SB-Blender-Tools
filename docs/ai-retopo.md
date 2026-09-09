@@ -38,6 +38,7 @@ module, exactly as `scripts/test_ai_retopo_headless.py` does, or symlink
 | Polygons | Quads / Triangles, mapped to whatever the selected model calls it. |
 | Remove Stray Fragments | Delete separate parts the model placed outside the object. On by default. See *Stray fragments* below. |
 | Hide Original | Hide (not delete) the source object after a successful import. |
+| History | Past jobs of this project, with *Import Again* for a result that was never imported. See *History* below. |
 | Pre-Decimation | Decimate the upload copy before sending (API limit 200 MB). The original is untouched. |
 
 Requirements: Object Mode, active object is a mesh. One job at a time; the
@@ -79,6 +80,39 @@ identified instead of failing as an opaque unknown file.
 assumption that the account lacks a Meshy plan, which was never confirmed
 against an API response. It is in the registry and can be tried. If a run fails,
 the API message in the panel finally says why.
+
+## History
+
+Because a started job cannot be cancelled, losing Blender means losing a job
+that is already paid for. The panel therefore keeps a *History* sub-panel, and
+its point is not the files — it is the job ids.
+
+An entry is written the moment the API returns the job id, long before anything
+can go wrong: name (the one the result carries in the outliner, `Scan_retopo`),
+time, model, status and, once it arrives, the size of the result. Selecting an
+entry shows those details and *Import Again*, which asks Scenario for the job
+once more. A job that was still running when Blender stopped is picked up there
+and finishes normally; a finished one is downloaded again. Nothing is cached
+locally — the result lives in the project after the import, and at Scenario as
+an asset.
+
+The list lives in `history.json` in the add-on's user folder, written through a
+temporary file and `os.replace`. That exchange is atomic, so a crash during the
+write leaves the previous file whole instead of half a new one. Old entries drop
+out at 100.
+
+*This Project Only* filters by the `.blend` the job belongs to. Jobs started in
+a file that was never saved have no project yet; saving the file for the first
+time hands them over to it. Only the jobs of that same document are handed over
+— a second Blender instance holds a different key for its own unsaved jobs and
+keeps them. Leaving an unsaved file without saving leaves its jobs without a
+project for good: they stay in the list under *all projects*, importable by job
+id, but they belong to a project that never came to exist. *Save As*, renaming
+or moving a project does not move entries either; that would be guesswork.
+
+If the source object is gone when a job is imported again, the active mesh
+serves as the reference for size and position. Without one the result comes in
+uncorrected, and the panel says so.
 
 ## Changing the model list
 

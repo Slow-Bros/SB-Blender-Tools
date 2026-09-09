@@ -6,9 +6,11 @@ Das gewählte Mesh wird im Object Mode hochgeladen, retopologisiert und als
 neues Objekt an der Position des Originals wieder importiert.
 """
 
-from . import preferences, props, operators, panel
+from . import preferences, props, history, operators, panel
 
-_modules = (preferences, props, operators, panel)
+# history nach props: sein register() spiegelt die Historie in die Liste, die
+# props am WindowManager anlegt
+_modules = (preferences, props, history, operators, panel)
 
 
 def register():

@@ -2,9 +2,30 @@
 """Szenen-Einstellungen und Laufzeitstatus fuer das Panel."""
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
+from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProperty,
+                       IntProperty, PointerProperty, StringProperty)
 
-from . import models
+from . import history, models
+
+
+class SBAIRetopoHistoryItem(bpy.types.PropertyGroup):
+    """Ein Eintrag der Historie, wie ihn das Panel zeigt.
+
+    Nur die Anzeige: die Wahrheit steht in history.json, diese Liste wird
+    daraus aufgebaut (history.sync).
+    """
+    name: StringProperty(name="Name")
+    job_id: StringProperty(name="Job")
+    started: StringProperty(name="Started")
+    status: StringProperty(name="Status")
+    model: StringProperty(name="Model")
+    size_mb: FloatProperty(name="Size (MB)")
+    source_object: StringProperty(name="Source Object")
+    blend_file: StringProperty(name="Project")
+
+
+def _sync_history(self, context):
+    history.sync(context)
 
 
 def _model_items(self, context):
@@ -84,6 +105,15 @@ class SBAIRetopoSettings(bpy.types.PropertyGroup):
         description="Hide the source object in the viewport after a successful import; it is kept",
         default=False,
     )
+    history_this_project: BoolProperty(
+        name="This Project Only",
+        description=(
+            "Show only the jobs of the current project. Jobs from a file that "
+            "was never saved have no project until it is saved the first time"
+        ),
+        default=True,
+        update=_sync_history,
+    )
 
     # Laufzeitstatus, nur zur Anzeige
     running: BoolProperty(default=False, options={"SKIP_SAVE"})
@@ -95,10 +125,18 @@ class SBAIRetopoSettings(bpy.types.PropertyGroup):
 
 
 def register():
+    bpy.utils.register_class(SBAIRetopoHistoryItem)
     bpy.utils.register_class(SBAIRetopoSettings)
     bpy.types.Scene.sb_ai_retopo = PointerProperty(type=SBAIRetopoSettings)
+    # Am WindowManager, nicht an der Szene: die Liste ist die Anzeige einer
+    # Datei und gehoert nicht in die .blend-Datei.
+    bpy.types.WindowManager.sb_ai_retopo_history = CollectionProperty(type=SBAIRetopoHistoryItem)
+    bpy.types.WindowManager.sb_ai_retopo_history_index = IntProperty(default=0)
 
 
 def unregister():
+    del bpy.types.WindowManager.sb_ai_retopo_history_index
+    del bpy.types.WindowManager.sb_ai_retopo_history
     del bpy.types.Scene.sb_ai_retopo
     bpy.utils.unregister_class(SBAIRetopoSettings)
+    bpy.utils.unregister_class(SBAIRetopoHistoryItem)
