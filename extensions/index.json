@@ -1,0 +1,31 @@
+{
+  "version": "v1",
+  "blocklist": [],
+  "data": [
+    {
+      "schema_version": "1.0.0",
+      "id": "ai_retopo",
+      "name": "AI Retopo",
+      "tagline": "AI retopology via Scenario API, placed on the original object",
+      "version": "0.1.0",
+      "type": "add-on",
+      "maintainer": "Slow Bros. <amalia@slow-bros.com>",
+      "license": [
+        "SPDX:GPL-3.0-or-later"
+      ],
+      "blender_version_min": "4.2.0",
+      "website": "https://github.com/Slow-Bros/SBTools",
+      "permissions": {
+        "network": "Upload mesh to api.cloud.scenario.com, download retopo result",
+        "files": "Temporary GLB/OBJ files while exchanging meshes with the API"
+      },
+      "tags": [
+        "Mesh",
+        "Object"
+      ],
+      "archive_url": "./ai_retopo-0.1.0.zip",
+      "archive_size": 31319,
+      "archive_hash": "sha256:74ae9f1c31e766bf1edb1617ce5cd05325f03605a0205164cab7d065a04e6290"
+    }
+  ]
+}
