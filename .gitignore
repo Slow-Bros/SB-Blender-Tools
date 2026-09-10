@@ -49,6 +49,9 @@ build/
 # Blender extension build cache
 .blender_ext/
 
+# Ausgelieferte Extension-Zips
+!extensions/*.zip
+
 # =============================================================================
 # Node.js (if a tool ships a JS side)
 # =============================================================================

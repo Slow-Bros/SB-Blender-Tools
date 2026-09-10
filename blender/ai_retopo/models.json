@@ -1,0 +1,72 @@
+{
+  "_comment": [
+    "Retopology models of the Scenario API. Edit this file to add a model,",
+    "adjust a range or drop one that is gone, without touching any Python.",
+    "Restart Blender afterwards.",
+    "",
+    "density: 'count' for models taking a target face count, 'level' for",
+    "models offering only low/medium/high. file_param, polygon_param and",
+    "count_param/level_param are the names this model expects in the request",
+    "body. polygon_values maps the panel's quads/tris choice onto whatever",
+    "the model calls it. extra is sent verbatim."
+  ],
+  "version": 1,
+  "models": [
+    {
+      "key": "hunyuan_polygen",
+      "id": "model_tencent-smarttopology",
+      "label": "Hunyuan PolyGen 1.5",
+      "description": "Tencent Hunyuan PolyGen 1.5. Art-grade quads, but only three density levels, no target count",
+      "density": "level",
+      "file_param": "file3d",
+      "polygon_param": "polygonType",
+      "polygon_values": {
+        "quads": "quadrilateral",
+        "tris": "triangle"
+      },
+      "level_param": "faceLevel",
+      "extra": {
+        "geometryFileFormat": "obj"
+      }
+    },
+    {
+      "key": "meshy_remesh",
+      "id": "model_meshy-remesh",
+      "label": "Meshy Remesh",
+      "description": "Meshy Remesh. Target count from 100 to 300,000 polygons. Never completed a run yet",
+      "density": "count",
+      "file_param": "model",
+      "polygon_param": "topology",
+      "polygon_values": {
+        "quads": "quad",
+        "tris": "triangle"
+      },
+      "count_param": "targetPolycount",
+      "count_min": 100,
+      "count_max": 300000,
+      "extra": {
+        "resizeHeight": 0,
+        "originAt": "empty"
+      }
+    },
+    {
+      "key": "tripo_retopology",
+      "id": "model_tripo-retopology",
+      "label": "Tripo Retopology",
+      "description": "Tripo Retopology. Target count from 1,000 to 20,000 faces",
+      "density": "count",
+      "file_param": "model",
+      "polygon_param": "quad",
+      "polygon_values": {
+        "quads": true,
+        "tris": false
+      },
+      "count_param": "faceLimit",
+      "count_min": 1000,
+      "count_max": 20000,
+      "extra": {
+        "bake": false
+      }
+    }
+  ]
+}
