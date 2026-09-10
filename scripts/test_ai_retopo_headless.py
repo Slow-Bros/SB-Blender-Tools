@@ -25,12 +25,51 @@ import addon_utils  # noqa: E402
 bpy.ops.wm.read_factory_settings(use_empty=True)
 mod = addon_utils.enable("ai_retopo", default_set=True, persistent=False)
 assert mod is not None, "add-on failed to enable"
-from ai_retopo import history, mesh_io, models, panel, preferences, scenario_client  # noqa: E402
+from ai_retopo import credentials, history, mesh_io, models, panel, preferences, scenario_client  # noqa: E402
 
 ctx = bpy.context
 scene = ctx.scene
 assert hasattr(scene, "sb_ai_retopo"), "scene settings missing"
 prefs = preferences.get_prefs(ctx)
+
+# --- shared credentials: one file for every SBTools add-on. Redirected to a
+# temp folder first thing, so the test never touches the real key.
+cred_dir = tempfile.mkdtemp(prefix="sb_credentials_")
+credentials.directory = lambda: cred_dir
+credentials._cache = None
+assert credentials.load() == {"api_key": "", "api_secret": ""}
+prefs.scenario_api_key = " key-1 "
+prefs.scenario_api_secret = "secret-1"
+assert credentials.load() == {"api_key": "key-1", "api_secret": "secret-1"}
+assert prefs.scenario_api_key == "key-1"
+assert os.path.exists(os.path.join(cred_dir, credentials.FILE_NAME))
+# Version 0.1.0 kept the key in the preferences as api_key/api_secret. Those
+# move into the shared file the first time they are read, and the old entry
+# is emptied so the secret is not stored twice.
+credentials.save(api_key="", api_secret="")
+prefs.api_key = "legacy-key"
+prefs.api_secret = "legacy-secret"
+assert preferences.get_credentials(ctx) == ("legacy-key", "legacy-secret")
+assert prefs.api_key == "" and prefs.api_secret == "", (prefs.api_key, prefs.api_secret)
+assert credentials.load()["api_key"] == "legacy-key"
+# a legacy entry never overrides shared credentials that already exist
+prefs.api_key = "older-key"
+assert preferences.get_credentials(ctx) == ("legacy-key", "legacy-secret")
+assert prefs.api_key == ""
+# environment variables fill in when the file is empty
+credentials.save(api_key="", api_secret="")
+os.environ["SCENARIO_API_KEY"] = "env-key"
+os.environ["SCENARIO_API_SECRET"] = "env-secret"
+assert preferences.get_credentials(ctx) == ("env-key", "env-secret")
+os.environ.pop("SCENARIO_API_KEY")
+os.environ.pop("SCENARIO_API_SECRET")
+# the module is a copy in every add-on, and the copies must not drift apart
+with open(os.path.join(ROOT, "blender", "ai_retopo", "credentials.py"), "rb") as f:
+    _copy_a = f.read()
+with open(os.path.join(ROOT, "blender", "ai_uv_layout", "credentials.py"), "rb") as f:
+    _copy_b = f.read()
+assert _copy_a == _copy_b, "credentials.py differs between ai_retopo and ai_uv_layout"
+print("[TEST] shared credentials ok")
 levels = [i.identifier for i in scene.sb_ai_retopo.bl_rna.properties["face_level"].enum_items]
 assert levels == ["low", "medium", "high"], levels
 assert scene.sb_ai_retopo.face_level == "medium"
@@ -550,8 +589,8 @@ bpy.ops.object.select_all(action="DESELECT")
 src.select_set(True)
 ctx.view_layer.objects.active = src
 assert bpy.ops.sb.ai_retopo.poll(), "operator should be available for active mesh in object mode"
-prefs.api_key = ""
-prefs.api_secret = ""
+prefs.scenario_api_key = ""
+prefs.scenario_api_secret = ""
 os.environ.pop("SCENARIO_API_KEY", None)
 os.environ.pop("SCENARIO_API_SECRET", None)
 try:

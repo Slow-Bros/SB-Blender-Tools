@@ -1,5 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""N-Panel (Sidebar) im 3D-Viewport, Tab 'SBTools'."""
+"""N-Panel (Sidebar) im 3D-Viewport, Tab 'SBTools'.
+
+Der Tab ist derselbe wie beim Retopo-Add-on: Blender legt alle Panels mit
+derselben bl_category in einen Tab, dafuer braucht es keine Verbindung
+zwischen den Add-ons. bl_order haelt UV Layout unter AI Retopo.
+"""
 
 import textwrap
 
@@ -31,17 +36,16 @@ def _pretty_size(size_mb):
     return "size unknown"
 
 
-class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
+class VIEW3D_PT_sb_ai_uv_layout(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "SBTools"
-    bl_label = "AI Retopo"
-    # Der Tab ist allen SBTools-Add-ons gemeinsam; bl_order haelt dieses Panel oben
-    bl_order = 0
+    bl_label = "AI UV Layout"
+    bl_order = 1
 
     def draw(self, context):
         layout = self.layout
-        settings = context.scene.sb_ai_retopo
+        settings = context.scene.sb_ai_uv
         obj = context.active_object
         running = is_running()
 
@@ -62,6 +66,11 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
         if obj is not None and obj.type == "MESH":
             box.label(text=obj.name, icon="MESH_DATA")
             box.label(text=f"{len(obj.data.polygons):,} faces")
+            active_uv = obj.data.uv_layers.active
+            if active_uv is not None:
+                box.label(text=f"UV map '{active_uv.name}' will be overwritten", icon="UV")
+            else:
+                box.label(text="No UV map yet", icon="UV")
         else:
             box.label(text="No mesh selected", icon="INFO")
         if context.mode != "OBJECT":
@@ -72,43 +81,20 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
         col.enabled = not running
         col.label(text="AI Model")
         col.prop(settings, "model", text="")
-
-        spec = models.get(settings.model)
-
         col.separator()
-        col.label(text="Target Polygons")
-        if models.uses_count(spec):
-            col.prop(settings, "target_faces", text="")
-            limited = models.clamp_count(spec, settings.target_faces) != settings.target_faces
-            col.label(
-                text=f"Model accepts {models.count_range_label(spec)}",
-                icon="ERROR" if limited else "NONE",
-            )
-        else:
-            col.prop(settings, "face_level", expand=True)
-            col.label(text="This model has levels only, no target count")
-
-        col.separator()
-        col.label(text="Polygons")
-        col.prop(settings, "polygon_type", expand=True)
-        col.separator()
-        col.prop(settings, "remove_fragments")
-        col.prop(settings, "hide_source")
-
-        row = col.row(align=True)
-        row.prop(settings, "pre_decimate")
-        sub = row.row(align=True)
-        sub.enabled = settings.pre_decimate
-        sub.prop(settings, "pre_decimate_target", text="")
+        col.prop(settings, "apply_to_source")
+        sub = col.row()
+        sub.enabled = not settings.apply_to_source
+        sub.prop(settings, "hide_source")
 
         layout.separator()
 
         # -- Action and status --------------------------------------------
         if running:
             layout.progress(text=settings.status or "Running ...", factor=settings.progress, type="BAR")
-            layout.operator("sb.ai_retopo_cancel", icon="CANCEL")
+            layout.operator("sb.ai_uv_layout_cancel", icon="CANCEL")
         else:
-            layout.operator("sb.ai_retopo", icon="MOD_REMESH", text="Start AI Retopology")
+            layout.operator("sb.ai_uv_layout", icon="UV", text="Generate UV Layout")
 
         if settings.last_result:
             layout.label(text=settings.last_result, icon="CHECKMARK")
@@ -123,7 +109,7 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
                 box.label(text=line, icon="ERROR" if i == 0 else "BLANK1")
 
 
-class VIEW3D_UL_sb_ai_retopo_history(bpy.types.UIList):
+class VIEW3D_UL_sb_ai_uv_history(bpy.types.UIList):
     """Eine Zeile pro Job: Name wie im Outliner, Modell, Status als Icon."""
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_prop, index):
@@ -135,33 +121,33 @@ class VIEW3D_UL_sb_ai_retopo_history(bpy.types.UIList):
         sub.label(text=item.model)
 
 
-class VIEW3D_PT_sb_ai_retopo_history(bpy.types.Panel):
+class VIEW3D_PT_sb_ai_uv_history(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "SBTools"
-    bl_parent_id = "VIEW3D_PT_sb_ai_retopo"
+    bl_parent_id = "VIEW3D_PT_sb_ai_uv_layout"
     bl_label = "History"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = self.layout
-        settings = context.scene.sb_ai_retopo
+        settings = context.scene.sb_ai_uv
         wm = context.window_manager
 
         row = layout.row(align=True)
         row.prop(settings, "history_this_project")
-        row.operator("sb.ai_retopo_history_refresh", text="", icon="FILE_REFRESH")
+        row.operator("sb.ai_uv_layout_history_refresh", text="", icon="FILE_REFRESH")
 
-        if not wm.sb_ai_retopo_history:
+        if not wm.sb_ai_uv_history:
             if settings.history_this_project and not bpy.data.filepath:
                 layout.label(text="No jobs in this unsaved file yet", icon="INFO")
             else:
                 layout.label(text="No jobs yet", icon="INFO")
             return
 
-        layout.template_list("VIEW3D_UL_sb_ai_retopo_history", "",
-                             wm, "sb_ai_retopo_history",
-                             wm, "sb_ai_retopo_history_index", rows=4)
+        layout.template_list("VIEW3D_UL_sb_ai_uv_history", "",
+                             wm, "sb_ai_uv_history",
+                             wm, "sb_ai_uv_history_index", rows=4)
 
         item = history.selected(context)
         if item is None:
@@ -169,7 +155,7 @@ class VIEW3D_PT_sb_ai_retopo_history(bpy.types.Panel):
 
         box = layout.box()
         box.label(text=_pretty_time(item.started), icon="TIME")
-        box.label(text=item.model or "unknown model", icon="MOD_REMESH")
+        box.label(text=item.model or "unknown model", icon="UV")
         box.label(text=item.status or "unknown",
                   icon=STATUS_ICONS.get(item.status, "QUESTION"))
         box.label(text=_pretty_size(item.size_mb), icon="FILE_3D")
@@ -179,11 +165,11 @@ class VIEW3D_PT_sb_ai_retopo_history(bpy.types.Panel):
 
         col = layout.column()
         col.enabled = not is_running()
-        col.operator("sb.ai_retopo_history_import", icon="IMPORT")
+        col.operator("sb.ai_uv_layout_history_import", icon="IMPORT")
 
 
-classes = (VIEW3D_PT_sb_ai_retopo, VIEW3D_UL_sb_ai_retopo_history,
-           VIEW3D_PT_sb_ai_retopo_history)
+classes = (VIEW3D_PT_sb_ai_uv_layout, VIEW3D_UL_sb_ai_uv_history,
+           VIEW3D_PT_sb_ai_uv_history)
 
 
 def register():

@@ -1,0 +1,26 @@
+schema_version = "1.0.0"
+
+id = "ai_uv_layout"
+version = "0.1.0"
+name = "AI UV Layout"
+tagline = "AI UV unwrapping via Scenario API, applied to the original mesh"
+maintainer = "Slow Bros. <amalia@slow-bros.com>"
+type = "add-on"
+
+website = "https://github.com/Slow-Bros/SBTools"
+tags = ["Mesh", "UV"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+network = "Upload mesh to api.cloud.scenario.com, download UV result"
+files = "Temporary OBJ files while exchanging meshes with the API"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "/.git/",
+  "/*.zip",
+]

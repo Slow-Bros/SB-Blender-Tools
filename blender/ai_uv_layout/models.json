@@ -1,0 +1,22 @@
+{
+  "_comment": [
+    "UV unwrapping models of the Scenario API. Edit this file to add a model",
+    "or drop one that is gone, without touching any Python. Restart Blender",
+    "afterwards.",
+    "",
+    "file_param is the name under which this model expects the uploaded asset",
+    "id in the request body. extra is sent verbatim. The UV models take no",
+    "other parameters, which is why there is nothing else to configure."
+  ],
+  "version": 1,
+  "models": [
+    {
+      "key": "hunyuan_uv",
+      "id": "model_tencent-uv-unwrapping",
+      "label": "Hunyuan UV Unwrapping",
+      "description": "Tencent Hunyuan UV unwrapping, the model Phototron uses. Takes no parameters",
+      "file_param": "file3d",
+      "extra": {}
+    }
+  ]
+}
