@@ -21,7 +21,10 @@ developed and tested against Blender 5.2.
 3. In the add-on preferences enter the Scenario **API Key** and **API Secret**
    (same credentials as in Phototron → Settings). Alternatively set the
    environment variables `SCENARIO_API_KEY` / `SCENARIO_API_SECRET` before
-   starting Blender.
+   starting Blender. The credentials are shared by all SBTools add-ons, so
+   they need entering once; where they live and how the entry from version
+   0.1.0 is taken over is described in
+   [ai-uv-layout.md](ai-uv-layout.md#shared-credentials).
 
 For development without packaging: add `blender/` to `sys.path` and enable the
 module, exactly as `scripts/test_ai_retopo_headless.py` does, or symlink
@@ -29,7 +32,9 @@ module, exactly as `scripts/test_ai_retopo_headless.py` does, or symlink
 
 ## Usage
 
-3D Viewport → Sidebar (`N`) → tab **SBTools** → panel **AI Retopo**.
+3D Viewport → Sidebar (`N`) → tab **SBTools** → panel **AI Retopo**. The tab
+is shared with the other SBTools add-ons; [AI UV Layout](ai-uv-layout.md) sits
+below this panel and takes the retopo result on to the next step.
 
 | Setting | Meaning |
 | --- | --- |
