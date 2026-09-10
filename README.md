@@ -1,13 +1,13 @@
-# SBTools
+# SB Blender Tools
 
-Repository for Slow Bros. tools, including AI Auto-Retopo etc.
+Repository for Slow Bros. Blender tools, starting with AI Retopo.
 
-The first goal is to make the AI retopology tooling from the Phototron pipeline available directly inside Blender as an add-on. Further in-house tools (Blender, Unity, pipeline scripts) live here as well.
+The first goal is to make the AI retopology tooling from the Phototron pipeline available directly inside Blender as an add-on. Further in-house Blender add-ons and pipeline scripts live here as well.
 
 ## Layout
 
 ```
-SBTools/
+SB-Blender-Tools/
 ├── blender/            # Blender add-ons / extensions, one folder per add-on
 │   └── ai_retopo/      # AI Retopo — retopology via Scenario API (docs/ai-retopo.md)
 ├── extensions/         # Published extension repository: zips + index.json (docs/releasing.md)
@@ -33,7 +33,7 @@ through Blender itself. In Preferences → Get Extensions → Repositories, add 
 remote repository with this URL:
 
 ```
-https://raw.githubusercontent.com/Slow-Bros/SBTools/main/extensions/index.json
+https://raw.githubusercontent.com/Slow-Bros/SB-Blender-Tools/main/extensions/index.json
 ```
 
 How a release is built and published: [docs/releasing.md](docs/releasing.md).
@@ -50,3 +50,7 @@ How a release is built and published: [docs/releasing.md](docs/releasing.md).
 - `main` — release state only; merged from `develop` when a version is tagged
 
 Feature work happens on `feature/<name>` branches off `develop`.
+
+## License
+
+GPL-3.0-or-later, see [LICENSE](LICENSE).

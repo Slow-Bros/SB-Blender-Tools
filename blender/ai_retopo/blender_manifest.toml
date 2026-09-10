@@ -7,7 +7,7 @@ tagline = "AI retopology via Scenario API, placed on the original object"
 maintainer = "Slow Bros. <amalia@slow-bros.com>"
 type = "add-on"
 
-website = "https://github.com/Slow-Bros/SBTools"
+website = "https://github.com/Slow-Bros/SB-Blender-Tools"
 tags = ["Mesh", "Object"]
 
 blender_version_min = "4.2.0"

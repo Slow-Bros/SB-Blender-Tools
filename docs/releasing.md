@@ -7,7 +7,7 @@ plain HTTP, so no server is needed — GitHub serves the files directly.
 The repository lives in `extensions/` and users point Blender at:
 
 ```
-https://raw.githubusercontent.com/Slow-Bros/SBTools/main/extensions/index.json
+https://raw.githubusercontent.com/Slow-Bros/SB-Blender-Tools/main/extensions/index.json
 ```
 
 Two consequences follow from that URL:
@@ -47,7 +47,8 @@ Two consequences follow from that URL:
    ```
 
 5. Commit the version bump, the zip and the regenerated `index.json` together,
-   then merge to `main` and tag the release.
+   then merge to `main` and tag the release as `<add-on>-<version>`, matching
+   the zip name, for example `ai_retopo-0.1.0`.
 
 ## Rules for `extensions/`
 
