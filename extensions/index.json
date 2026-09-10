@@ -24,8 +24,33 @@
         "Object"
       ],
       "archive_url": "./ai_retopo-0.1.0.zip",
-      "archive_size": 31319,
-      "archive_hash": "sha256:74ae9f1c31e766bf1edb1617ce5cd05325f03605a0205164cab7d065a04e6290"
+      "archive_size": 34455,
+      "archive_hash": "sha256:2af0e1af27505ef4b72dc62a451b38f13f255e16055b65136890ec88020aa5fd"
+    },
+    {
+      "schema_version": "1.0.0",
+      "id": "ai_uv_layout",
+      "name": "AI UV Layout",
+      "tagline": "AI UV unwrapping via Scenario API, applied to the original mesh",
+      "version": "0.1.0",
+      "type": "add-on",
+      "maintainer": "Slow Bros. <amalia@slow-bros.com>",
+      "license": [
+        "SPDX:GPL-3.0-or-later"
+      ],
+      "blender_version_min": "4.2.0",
+      "website": "https://github.com/Slow-Bros/SBTools",
+      "permissions": {
+        "network": "Upload mesh to api.cloud.scenario.com, download UV result",
+        "files": "Temporary OBJ files while exchanging meshes with the API"
+      },
+      "tags": [
+        "Mesh",
+        "UV"
+      ],
+      "archive_url": "./ai_uv_layout-0.1.0.zip",
+      "archive_size": 31828,
+      "archive_hash": "sha256:32119f7e803186936035847606e12a1bea8ef67c5f7938a2cff6e672d4917e11"
     }
   ]
 }
