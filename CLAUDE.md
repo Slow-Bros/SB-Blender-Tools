@@ -1,4 +1,4 @@
-# CLAUDE.md — SBTools
+# CLAUDE.md — SB Blender Tools
 
 In-house tools for Slow Bros. Every Blender add-on lives in its own folder under
 `blender/` as a Blender 4.2+ extension with a `blender_manifest.toml`. More
@@ -56,8 +56,8 @@ Run the headless smoke test, which needs no network access:
 & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --python scripts\test_ai_retopo_headless.py
 ```
 
-Developed and tested against Blender 5.2. `python` is not on PATH on this
-machine; use Blender's bundled interpreter when a script needs one.
+Developed and tested against Blender 5.2. Do not assume `python` is on
+PATH; use Blender's bundled interpreter when a script needs one.
 
 ## Branches
 
