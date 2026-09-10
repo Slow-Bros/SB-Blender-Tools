@@ -284,6 +284,55 @@ bpy.data.meshes.remove(ma)
 bpy.data.meshes.remove(mb)
 print("[TEST] topology check ok")
 
+# --- a result split into several OBJ object blocks (a model may write one
+# per UV island) must keep the file's face order. Importing as separate
+# objects and joining them sorted them alphabetically and broke the transfer
+# with matching counts. Suzanne is used because her mixed quads and
+# triangles make a reordering visible; the split puts the second half of the
+# faces into a block whose name sorts first.
+bpy.ops.mesh.primitive_monkey_add()
+monkey = ctx.active_object
+monkey.name = "Monkey"
+m_path = os.path.join(tmp, "monkey_upload.obj")
+mesh_io.export_object_for_upload(ctx, monkey, m_path)
+before = set(bpy.data.objects)
+bpy.ops.wm.obj_import(filepath=m_path)
+m_sim = [o for o in bpy.data.objects if o not in before][0]
+m_layer = m_sim.data.uv_layers.new(name="UVMap")
+m_n = len(m_sim.data.loops)
+m_expected = np.stack([np.arange(m_n) / m_n, (np.arange(m_n) % 5) / 5.0 + 0.1], axis=1).astype(np.float32)
+m_layer.data.foreach_set("uv", m_expected.ravel())
+bpy.ops.object.select_all(action="DESELECT")
+m_sim.select_set(True)
+ctx.view_layer.objects.active = m_sim
+half = np.zeros(len(m_sim.data.polygons), dtype=bool)
+half[len(half) // 2:] = True
+m_sim.data.polygons.foreach_set("select", half)
+bpy.ops.object.mode_set(mode="EDIT")
+bpy.ops.mesh.separate(type="SELECTED")
+bpy.ops.object.mode_set(mode="OBJECT")
+m_parts = list(ctx.selected_objects)
+for o in m_parts:
+    o.name = "AAA_second_half" if o is not m_sim else "ZZZ_first_half"
+ctx.view_layer.objects.active = m_sim
+split_path = os.path.join(tmp, "uv_result_split.obj")
+bpy.ops.wm.obj_export(filepath=split_path, export_selected_objects=True, export_materials=False)
+for o in m_parts:
+    bpy.data.objects.remove(o, do_unlink=True)
+with open(split_path, encoding="utf-8") as f:
+    blocks = [l for l in f.read().splitlines() if l.startswith("o ")]
+assert blocks == ["o ZZZ_first_half", "o AAA_second_half"], blocks
+objects_before = {o.name for o in bpy.data.objects}
+uv_obj = mesh_io.import_uv_mesh(ctx, split_path)
+assert len(bpy.data.objects) == len(objects_before) + 1, "the file must come in as one object"
+assert mesh_io.topology_matches(monkey.data, uv_obj.data), "face order must follow the file"
+_, m_stats = mesh_io.apply_uvs(ctx, uv_obj, monkey)
+assert m_stats["layer"] == "AI_UV_1" and m_stats["faces"] == 500, m_stats
+assert np.allclose(read_uv(monkey), m_expected, atol=1e-5), "UVs must land on their own faces"
+assert {o.name for o in bpy.data.objects} == objects_before
+bpy.data.objects.remove(monkey, do_unlink=True)
+print("[TEST] multi-block result keeps face order")
+
 # --- standalone: history import when no mesh with matching topology is left
 uv_obj = mesh_io.import_uv_mesh(ctx, result_path)
 alone, stats4 = mesh_io.keep_standalone(ctx, uv_obj, "Gone_uv")

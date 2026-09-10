@@ -83,9 +83,9 @@ disabled and the reason in the panel.
 3. **Generate**: `POST /v1/generate/custom/{model id}` with `{"file3d": asset}`.
 4. **Poll** `GET /v1/jobs/{id}` until `success`, then `GET /v1/assets/{id}`
    and download the mesh, preferring OBJ, then GLB, then FBX.
-5. **Transfer** (main thread): import the result, join it into one mesh, copy
-   its UVs onto the target (see below), apply smooth shading, delete the
-   imported carrier mesh.
+5. **Transfer** (main thread): import the result as one mesh, copy its UVs
+   onto the object (see below), apply smooth shading, delete the imported
+   carrier mesh.
 
 The worker thread never touches `bpy`; it communicates via a queue that a modal
 operator drains on a timer.
@@ -110,6 +110,13 @@ same faces in the same order as what was uploaded.
   mesh, not the subdivided one.
 - **Existing UVs stay home.** They are not uploaded; the model would ignore
   them, and the file is smaller without them.
+- **The result is read as one mesh.** An OBJ can hold several `o` or `g`
+  blocks, and a model may well write one per UV island. Blender's importer
+  would turn those into separate objects, and joining them again sorts the
+  faces by object name instead of file order, so the counts still match while
+  every face gets another face's UVs. The import therefore runs with object
+  and group splitting off. Phototron imports with the defaults and joins,
+  which carries the same latent risk.
 
 ## Transfer
 

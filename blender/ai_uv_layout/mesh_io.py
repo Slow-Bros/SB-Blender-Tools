@@ -113,7 +113,13 @@ def _import_file(path):
     ext = os.path.splitext(path)[1].lower()
     before = set(bpy.data.objects)
     if ext == ".obj":
-        result = bpy.ops.wm.obj_import(filepath=path)
+        # Als EIN Mesh lesen, ohne Aufteilung nach 'o'- oder 'g'-Bloecken. Der
+        # UV-Transfer kopiert nach Face-Index und braucht die Dateireihenfolge;
+        # mehrere Objekte wieder zusammenzufuegen wuerde sie in Blenders
+        # (alphabetischer) Objektreihenfolge neu sortieren, und die Faces
+        # saessen verschoben, obwohl die Summen stimmen.
+        result = bpy.ops.wm.obj_import(filepath=path, use_split_objects=False,
+                                       use_split_groups=False)
     elif ext in (".glb", ".gltf"):
         result = bpy.ops.import_scene.gltf(filepath=path)
     elif ext == ".fbx":
