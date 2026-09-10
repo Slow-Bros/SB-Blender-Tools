@@ -175,12 +175,13 @@ def read_co(obj):
 objects_before = {o.name for o in bpy.data.objects}
 uv_obj = mesh_io.import_uv_mesh(ctx, result_path)
 assert uv_obj.data.uv_layers.active is not None
-assert mesh_io.topology_matches(src.data, uv_obj.data)
+assert mesh_io.counts_match(src.data, uv_obj.data)
 assert mesh_io.next_uv_layer_name(src.data) == "AI_UV_1"
 same, stats = mesh_io.apply_uvs(ctx, uv_obj, src)
 ctx.view_layer.update()
 assert same is src
-assert stats["method"] == mesh_io.METHOD_INDEX and stats["layer"] == "AI_UV_1", stats
+assert stats["method"] == mesh_io.METHOD_GEOMETRY and stats["layer"] == "AI_UV_1", stats
+assert stats["faces_in_place"] == 6 and stats["fitted"], stats   # normalised result, every face found
 assert stats["coverage"] > 0.99 and stats["faces"] == 6 and stats["quads"] == 6, stats
 assert {o.name for o in bpy.data.objects} == objects_before, "UV carrier must be removed, no copy made"
 assert [l.name for l in src.data.uv_layers] == ["UVMap", "AI_UV_1"], [l.name for l in src.data.uv_layers]
@@ -247,7 +248,7 @@ ball.name = "Ball"
 ball_uv_before = read_uv(ball)      # the primitive has its own UVs, they must survive untouched
 objects_before = {o.name for o in bpy.data.objects}
 uv_obj = mesh_io.import_uv_mesh(ctx, result_path)
-assert not mesh_io.topology_matches(ball.data, uv_obj.data)
+assert not mesh_io.counts_match(ball.data, uv_obj.data)
 try:
     mesh_io.apply_uvs(ctx, uv_obj, ball)
     raise AssertionError("a topology mismatch must be rejected")
@@ -269,38 +270,85 @@ assert not bare.data.uv_layers, "a failed transfer must not leave a UV map behin
 assert not bare.modifiers
 print("[TEST] topology mismatch rejected cleanly")
 
-# --- same face and corner count but different face sizes is not a match
-# (stricter than Phototron, which compares only the two counts)
-ma = bpy.data.meshes.new("two_quads")
-ma.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (2, 0, 0), (2, 1, 0)], [],
-               [(0, 1, 2, 3), (1, 4, 5, 2)])
-mb = bpy.data.meshes.new("tri_penta")
-mb.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0), (2, 0, 0), (3, 0, 0), (3, 1, 0), (2, 1, 0)], [],
-               [(0, 1, 2), (1, 3, 4, 5, 6)])
-assert len(ma.polygons) == len(mb.polygons) == 2 and len(ma.loops) == len(mb.loops) == 8
-assert not mesh_io.topology_matches(ma, mb)
-assert mesh_io.topology_matches(ma, ma)
-bpy.data.meshes.remove(ma)
-bpy.data.meshes.remove(mb)
-print("[TEST] topology check ok")
+# --- same face and corner count but different geometry: the counts pass,
+# the matching finds no counterparts, and the error says how many
+bpy.ops.mesh.primitive_cube_add(calc_uvs=False)
+warped = ctx.active_object
+warped.name = "Warped"
+warped.data.vertices[0].co.x += 0.3     # one corner moved, four faces lose their match
+objects_before = {o.name for o in bpy.data.objects}
+uv_obj = mesh_io.import_uv_mesh(ctx, result_path)
+assert mesh_io.counts_match(warped.data, uv_obj.data)
+try:
+    mesh_io.apply_uvs(ctx, uv_obj, warped)
+    raise AssertionError("different geometry must be rejected")
+except mesh_io.MeshIOError as e:
+    assert "3 of 6 faces have no counterpart" in str(e), e
+assert not warped.data.uv_layers and {o.name for o in bpy.data.objects} == objects_before
+print("[TEST] geometry mismatch rejected cleanly")
 
-# --- a result split into several OBJ object blocks (a model may write one
-# per UV island) must keep the file's face order. Importing as separate
-# objects and joining them sorted them alphabetically and broke the transfer
-# with matching counts. Suzanne is used because her mixed quads and
-# triangles make a reordering visible; the split puts the second half of the
-# faces into a block whose name sorts first.
+# --- the real thing: the model returns faces regrouped by connected part,
+# vertices renumbered, corners starting elsewhere, and the geometry may be
+# normalised. Every UV must still land on the face and corner it belongs to.
+# Suzanne has mixed quads and triangles and three parts (head, two eyes).
 bpy.ops.mesh.primitive_monkey_add()
 monkey = ctx.active_object
 monkey.name = "Monkey"
+mm = monkey.data
+m_n = len(mm.loops)
+m_expected = np.stack([np.arange(m_n) / m_n, (np.arange(m_n) % 5) / 5.0 + 0.1], axis=1).astype(np.float32)
+rng = np.random.default_rng(7)
+vert_perm = rng.permutation(len(mm.vertices))       # old vertex index -> new
+face_order = rng.permutation(len(mm.polygons))      # new face position -> old face
+m_co = read_co(monkey)
+new_co = np.empty_like(m_co)
+new_co[vert_perm] = m_co
+new_faces, new_uvs = [], []
+for old_f in face_order:
+    poly = mm.polygons[int(old_f)]
+    loops = list(range(poly.loop_start, poly.loop_start + poly.loop_total))
+    verts = list(poly.vertices)
+    r = int(old_f) % len(verts)                       # start the face at another corner
+    loops, verts = loops[r:] + loops[:r], verts[r:] + verts[:r]
+    new_faces.append([int(vert_perm[v]) for v in verts])
+    new_uvs.extend(m_expected[l] for l in loops)
+shuffled = bpy.data.meshes.new("shuffled")
+shuffled.from_pydata(new_co.tolist(), [], new_faces)
+s_layer = shuffled.uv_layers.new(name="UVMap", do_init=False)
+s_layer.data.foreach_set("uv", np.array(new_uvs, dtype=np.float32).ravel())
+s_lo, s_hi = new_co.min(axis=0), new_co.max(axis=0)
+shuffled.transform(Matrix.Translation(Vector((0.3, -0.2, 0.1))) @ Matrix.Scale(1.0 / float((s_hi - s_lo).max()), 4)
+                   @ Matrix.Translation(-Vector(((s_lo + s_hi) * 0.5).tolist())))
+carrier = bpy.data.objects.new("carrier", shuffled)
+scene.collection.objects.link(carrier)
+for o in bpy.data.objects:
+    o.select_set(o == carrier)
+ctx.view_layer.objects.active = carrier
+shuffled_path = os.path.join(tmp, "uv_result_shuffled.obj")
+bpy.ops.wm.obj_export(filepath=shuffled_path, export_selected_objects=True, export_materials=False)
+bpy.data.objects.remove(carrier, do_unlink=True)
+uv_obj = mesh_io.import_uv_mesh(ctx, shuffled_path)
+assert not np.array_equal(mesh_io._loop_totals(monkey.data), mesh_io._loop_totals(uv_obj.data)), \
+    "the shuffle must actually change the face order"
+_, s_stats = mesh_io.apply_uvs(ctx, uv_obj, monkey)
+assert s_stats["faces"] == 500 and s_stats["fitted"], s_stats
+assert s_stats["faces_in_place"] < 50, s_stats
+assert np.allclose(read_uv(monkey), m_expected, atol=1e-5), "every UV must reach its own face and corner"
+monkey.data.uv_layers.remove(monkey.data.uv_layers["AI_UV_1"])
+print(f"[TEST] shuffled result matched by geometry: {s_stats['faces_in_place']} faces were still in place")
+
+# --- a result split into several OBJ object blocks (the model writes one
+# per connected part) must come in as one mesh. Importing as separate
+# objects and joining them dropped nothing but reshuffled; with the
+# geometric matching this is belt and braces, the carrier must simply arrive
+# whole. The split puts the second half of the faces into a block whose name
+# sorts first.
 m_path = os.path.join(tmp, "monkey_upload.obj")
 mesh_io.export_object_for_upload(ctx, monkey, m_path)
 before = set(bpy.data.objects)
 bpy.ops.wm.obj_import(filepath=m_path)
 m_sim = [o for o in bpy.data.objects if o not in before][0]
 m_layer = m_sim.data.uv_layers.new(name="UVMap")
-m_n = len(m_sim.data.loops)
-m_expected = np.stack([np.arange(m_n) / m_n, (np.arange(m_n) % 5) / 5.0 + 0.1], axis=1).astype(np.float32)
 m_layer.data.foreach_set("uv", m_expected.ravel())
 bpy.ops.object.select_all(action="DESELECT")
 m_sim.select_set(True)
@@ -325,13 +373,36 @@ assert blocks == ["o ZZZ_first_half", "o AAA_second_half"], blocks
 objects_before = {o.name for o in bpy.data.objects}
 uv_obj = mesh_io.import_uv_mesh(ctx, split_path)
 assert len(bpy.data.objects) == len(objects_before) + 1, "the file must come in as one object"
-assert mesh_io.topology_matches(monkey.data, uv_obj.data), "face order must follow the file"
+assert mesh_io.counts_match(monkey.data, uv_obj.data)
 _, m_stats = mesh_io.apply_uvs(ctx, uv_obj, monkey)
 assert m_stats["layer"] == "AI_UV_1" and m_stats["faces"] == 500, m_stats
+assert m_stats["faces_in_place"] == 500 and not m_stats["fitted"], m_stats
 assert np.allclose(read_uv(monkey), m_expected, atol=1e-5), "UVs must land on their own faces"
 assert {o.name for o in bpy.data.objects} == objects_before
 bpy.data.objects.remove(monkey, do_unlink=True)
 print("[TEST] multi-block result keeps face order")
+
+# --- two quads crossing each other share a centroid but not their corners
+# (seen in a real retopo result). The corners must decide which is which,
+# whichever comes first in the result.
+sq = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+dm = [(0.5, -0.2, 0), (1.2, 0.5, 0), (0.5, 1.2, 0), (-0.2, 0.5, 0)]
+cross = bpy.data.meshes.new("cross")
+cross.from_pydata(sq + dm, [], [(0, 1, 2, 3), (4, 5, 6, 7)])
+cross_obj = bpy.data.objects.new("Cross", cross)
+scene.collection.objects.link(cross_obj)
+c_expected = np.array([[0.1 * i, 0.5] for i in range(8)], dtype=np.float32)
+swapped = bpy.data.meshes.new("cross_result")
+swapped.from_pydata(dm + sq, [], [(0, 1, 2, 3), (4, 5, 6, 7)])   # the diamond first
+sw_layer = swapped.uv_layers.new(name="UVMap", do_init=False)
+sw_layer.data.foreach_set("uv", np.concatenate([c_expected[4:], c_expected[:4]]).ravel())
+sw_obj = bpy.data.objects.new("cross_carrier", swapped)
+scene.collection.objects.link(sw_obj)
+_, c_stats = mesh_io.apply_uvs(ctx, sw_obj, cross_obj)
+assert c_stats["faces"] == 2 and c_stats["faces_in_place"] == 0, c_stats
+assert np.allclose(read_uv(cross_obj), c_expected), read_uv(cross_obj)
+bpy.data.objects.remove(cross_obj, do_unlink=True)
+print("[TEST] crossing quads told apart by their corners")
 
 # --- standalone: history import when no mesh with matching topology is left
 uv_obj = mesh_io.import_uv_mesh(ctx, result_path)

@@ -236,7 +236,7 @@ class _UVModal:
         if source is None:
             active = context.active_object
             if (active is not None and active.type == "MESH"
-                    and mesh_io.topology_matches(active.data, uv_obj.data)):
+                    and mesh_io.counts_match(active.data, uv_obj.data)):
                 source = active
                 note = (
                     f"'{job.source_name}' no longer exists, so the UVs went to '{active.name}', "

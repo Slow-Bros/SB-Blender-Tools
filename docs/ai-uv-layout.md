@@ -66,7 +66,14 @@ unwrapping model today:
 | Hunyuan UV Unwrapping | `model_tencent-uv-unwrapping` | none, only the uploaded file | OBJ |
 
 The request body is exactly what Phototron sends: the asset id under `file3d`,
-nothing else. The registry exists so a second model is a JSON entry and not a
+nothing else. Besides the OBJ the job also returns an FBX of the same mesh
+and two PNG images; the add-on takes the OBJ and ignores the rest.
+
+Not every mesh is accepted. Suzanne fails after a few seconds with *An
+internal error occurred* and the hint that the file format may be invalid for
+this generation type; a closed retopo mesh and a cube run fine. The likely
+reason is her open geometry, the eye sockets are holes and the eyes separate
+shells. A failed job shows the API message in the panel. The registry exists so a second model is a JSON entry and not a
 code change; the rules for the file are the ones described for AI Retopo
 (*Changing the model list*), minus the density parameters that UV models do not
 have. A broken `models.json` leaves the add-on registered with the Start button
@@ -95,13 +102,13 @@ operator drains on a timer.
 Phototron's comment on the transfer is the whole reason: *the UV API normalizes
 geometry (scale + center). Instead of trying to reverse that, we keep the
 original geometry and only copy the UV coordinates, since both meshes share the
-same topology.* Copying UVs corner for corner works only if the result has the
-same faces in the same order as what was uploaded.
+same topology.* The result must therefore carry the same faces with the same
+corners as what was uploaded.
 
-- **OBJ up, OBJ down.** OBJ keeps quads and writes faces in order. GLB
-  triangulates on export, so a quad mesh would come back with twice the faces
-  and the copy could not run. Phototron uploads the retopo OBJ as it is and
-  asks for the result in OBJ (`targetFormat: 'obj'`); the add-on does the same.
+- **OBJ up, OBJ down.** OBJ keeps quads. GLB triangulates on export, so a
+  quad mesh would come back with twice the faces and nothing would match.
+  Phototron uploads the retopo OBJ as it is and asks for the result in OBJ
+  (`targetFormat: 'obj'`); the add-on does the same.
 - **Base mesh, not the evaluated one.** The UVs are written onto the mesh
   data block. With a Subdivision modifier on the object, the evaluated mesh has
   more faces than the data block and the copy would not line up. So the base
@@ -110,45 +117,65 @@ same faces in the same order as what was uploaded.
   mesh, not the subdivided one.
 - **Existing UVs stay home.** They are not uploaded; the model would ignore
   them, and the file is smaller without them.
-- **The result is read as one mesh.** An OBJ can hold several `o` or `g`
-  blocks, and a model may well write one per UV island. Blender's importer
-  would turn those into separate objects, and joining them again sorts the
-  faces by object name instead of file order, so the counts still match while
-  every face gets another face's UVs. The import therefore runs with object
-  and group splitting off. Phototron imports with the defaults and joins,
-  which carries the same latent risk.
+- **The result is read as one mesh.** The model's OBJ holds one `o` block per
+  connected part (`part_00000001`, `part_00000002`, ...). Blender's importer
+  would turn those into separate objects; the add-on imports with object and
+  group splitting off and never joins anything.
 
 ## Transfer
 
-Follows the main path of `transferUVsToRetopo` in Phototron: same number of
-faces and corners → copy the UV of every corner by index. The add-on
-additionally checks that every face has the same number of corners in both
-meshes. Phototron compares only the two totals; two meshes can match on both
-and still distribute corners differently, and a copy by index would then be
-wrong without anyone noticing. Checking the sizes costs nothing.
+Phototron copies the UV of every corner by index: same number of faces and
+corners, corner *i* of the result goes to corner *i* of the original. That
+assumes the model returns the faces in the order they were uploaded, and **it
+does not**. Measured on a real job (September 2026, a retopo mesh of 1,755
+faces in two connected parts): the result is written by a Blender 3.6 on
+Scenario's side with one `o` block per connected part, and faces of one part
+that sat between faces of the other in the original move to the end of their
+block. Same 1,755 faces, same 6,547 corners, but from face 448 on everything
+sits one or two positions off. A copy by index would give those faces another
+face's UVs, and with an all-quad mesh nobody would notice until the texture
+comes out wrong. Phototron's transfer only ever worked for meshes in one
+piece; a cube passes, Suzanne's head with two eyes does not.
 
-The size and position of the returned geometry play no part in this. The model
-hands back a normalised mesh, and that is fine: UVs are per corner and do not
-depend on where the corner sits in space. The AI Retopo placement correction
-has no counterpart here because nothing geometric is taken from the result.
+What the model does keep is the geometry. On that job every vertex came back
+at exactly its uploaded position, not even scaled. The add-on therefore
+matches by geometry instead of by index:
 
-**A topology mismatch is an error**, reported with both sets of numbers, and
-it leaves everything as it was: no new UV map on the original. It is
-not expected from the Hunyuan model, which returns the uploaded topology; it
-would point at a result in a different format (GLB, triangulated) or at a mesh
-edited between starting the job and importing it again from the history.
+1. The result is fitted onto the original's bounding box with the AI Retopo
+   recipe (compare the diagonals, correct beyond one percent). On the job
+   above nothing had to be corrected; the fit is the safety net in case the
+   model does normalise, as Phototron's comment says it may.
+2. Each result face is matched to the original face with the nearest centroid,
+   within 0.1 % of the bounding-box diagonal.
+3. Within that face, corners are paired by position, each corner exclusively,
+   nearest first. Where several original faces share a centroid, the corners
+   decide: two quads crossing each other have the same centre and different
+   corners, and a real retopo result contained such a pair. Two corners of
+   one face on the same position (a collapsed quad) each still get their own
+   partner.
 
-Phototron has a fallback at this point, a *Data Transfer* modifier with
-*Topology* mapping, and it was deliberately not ported (September 2026).
-Blender's topology mapping needs identical corner counts just like the copy by
-index; with different counts it reports *'Topology' mapping cannot be used in
-this case* and leaves the mesh untouched, so the fallback transfers nothing.
-Phototron's own comment describes it as "nearest face interpolated", which is
-a different mapping than the code sets. A fallback that would actually work
-for different topologies (fit the result onto the source bounding box, then
-map by nearest face) was considered and not built: the case does not occur
-with the one model there is, and a nearest-face projection is unclean at UV
-seams anyway. A clear message was judged more useful than a silent no-op.
+The matching is deliberately not vertex-to-vertex across the whole mesh:
+Suzanne has two pairs of vertices on identical positions, and a mapping by
+vertex set becomes ambiguous there. Inside a single face no two corners
+coincide, so the per-face pairing is unambiguous.
+
+The console reports how many faces were matched and how many of them were
+still at their original index, so an index copy would have worked. The
+number is informational; the transfer does not depend on it.
+
+**A mismatch is an error** and leaves everything as it was, no new UV map on
+the original. Different face or corner counts are reported with both sets of
+numbers; that points at a result in a different format (GLB, triangulated).
+Equal counts but faces without a counterpart are reported with the count of
+faces left over; that points at a mesh edited between starting the job and
+importing it again from the history, or at a model that moved vertices.
+
+Phototron has a fallback for the count mismatch, a *Data Transfer* modifier
+with *Topology* mapping, and it was deliberately not ported. Blender's
+topology mapping needs identical corner counts and otherwise reports
+*'Topology' mapping cannot be used in this case* and leaves the mesh
+untouched, so the fallback transfers nothing. A clear message was judged more
+useful than a silent no-op.
 
 ## Smooth shading
 
@@ -206,8 +233,11 @@ into the shared file and the old fields are emptied.
 
 The test needs no network access. It enables both add-ons side by side and
 covers: the shared tab and shared credentials, the model registry, OBJ export
-of the base mesh, the transfer by index as a new numbered UV map with existing
-maps untouched, the eight-map limit, the clean rejection of a topology
-mismatch, the standalone fallback, the API
+of the base mesh, the transfer as a new numbered UV map with existing maps
+untouched, the eight-map limit, the geometric matching on a result with
+shuffled faces, renumbered vertices, rotated corners and normalised geometry,
+crossing quads with a shared centroid, a result split into several `o`
+blocks, the clean rejection of a topology or geometry mismatch, the
+standalone fallback, the API
 response parsers, and the history. The live API path is exercised manually in
 Blender with real credentials.
