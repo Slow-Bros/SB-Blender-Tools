@@ -3,10 +3,10 @@
 Blender port of the UV layout step from the Phototron desktop app
 (`apps/desktop/public/ipc/retopology.js`, the `uv` phase and
 `transferUVsToRetopo`). The active mesh is sent to a UV unwrapping model on the
-Scenario API, and the UV coordinates that come back are written onto the
-**unchanged geometry of the original**: by default onto a copy named
-`<name>_uv`, on request onto the object itself. Geometry, size and position
-never come from the API result.
+Scenario API, and the UV coordinates that come back are added to the
+**original object as a new UV map** named `AI_UV_1`, `AI_UV_2` and so on.
+Existing UV maps are kept, geometry, size and position never come from the
+API result.
 
 Location: `blender/ai_uv_layout/` — Blender 4.2+ extension
 (`blender_manifest.toml`), developed and tested against Blender 5.2.
@@ -39,21 +39,22 @@ into one tab, so both add-ons appear together without knowing about each other.
 | Setting | Meaning |
 | --- | --- |
 | AI Model | Which unwrapping model runs the job. Currently one, see *Models*. |
-| Apply to Original | Write the UV map onto the active object itself, overwriting its active UV map. Off by default: a copy `<name>_uv` receives the UVs and the original is untouched. |
-| Hide Original | Hide (not delete) the source object after a successful transfer. Only meaningful when a copy is made. |
 | History | Past jobs of this project, with *Import Again* for a result that was never imported. |
 
 Requirements: Object Mode, active object is a mesh. One job at a time; the
 panel shows a progress bar and a cancel button while running. Progress and
 errors are also printed to the system console with the prefix `[SB-AI-UV]`.
 
-The panel says which UV map will be overwritten. Without one, a map named
-`UVMap` is created.
+Result: the object gets a new UV map with the model's layout, set active for
+editing and rendering, and is smooth shaded. Nothing else about the object
+changes: no copy is made, and the UV maps it had stay as they were.
 
-Result: the target object (copy or original) carries the model's UV layout on
-the active UV map, is smooth shaded, selected and active. A copy lands in the
-same collection(s) as the source, with the same parent, world matrix and
-modifiers.
+The panel shows how many UV maps the object has and the name the result will
+get. Maps are numbered `AI_UV_1`, `AI_UV_2`, ... over the highest number
+already present, so deleting `AI_UV_1` does not make the next result reuse the
+name, and maps with other names (`UVMap`, a lightmap) are left alone and not
+counted. Blender allows eight UV maps per mesh; with eight present the panel
+says so and the job is refused before anything is uploaded.
 
 ## Models
 
@@ -125,7 +126,7 @@ depend on where the corner sits in space. The AI Retopo placement correction
 has no counterpart here because nothing geometric is taken from the result.
 
 **A topology mismatch is an error**, reported with both sets of numbers, and
-it leaves everything as it was: no copy, no new UV map on the original. It is
+it leaves everything as it was: no new UV map on the original. It is
 not expected from the Hunyuan model, which returns the uploaded topology; it
 would point at a result in a different format (GLB, triangulated) or at a mesh
 edited between starting the job and importing it again from the history.
@@ -145,10 +146,10 @@ seams anyway. A clear message was judged more useful than a silent no-op.
 ## Smooth shading
 
 Phototron's transfer script ends with *shade smooth*, and the UV step runs its
-smoothing pass once more after that. The add-on applies the same to the target:
-custom split normals cleared, `sharp_face` and `sharp_edge` removed. A copy
-gets it anyway; with *Apply to Original* it also changes the original's
-shading, which is Phototron's behaviour and is documented here for that reason.
+smoothing pass once more after that. The add-on applies the same to the
+object: custom split normals cleared, `sharp_face` and `sharp_edge` removed.
+That changes the original's shading, which is Phototron's behaviour and is
+documented here for that reason.
 
 ## History
 
@@ -198,7 +199,8 @@ into the shared file and the old fields are emptied.
 
 The test needs no network access. It enables both add-ons side by side and
 covers: the shared tab and shared credentials, the model registry, OBJ export
-of the base mesh, the transfer by index onto a copy and onto the original, the
-clean rejection of a topology mismatch, the standalone fallback, the API
+of the base mesh, the transfer by index as a new numbered UV map with existing
+maps untouched, the eight-map limit, the clean rejection of a topology
+mismatch, the standalone fallback, the API
 response parsers, and the history. The live API path is exercised manually in
 Blender with real credentials.

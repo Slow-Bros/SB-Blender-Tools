@@ -3,9 +3,8 @@
 
 Port des UV-Layout-Schritts aus der Phototron Desktop-App als Blender-Add-on.
 Das aktive Mesh wird im Object Mode als OBJ hochgeladen, vom Modell mit UVs
-versehen, und die UV-Koordinaten werden auf die unveraenderte Geometrie des
-Originals uebertragen: als Kopie neben dem Original oder auf das Original
-selbst.
+versehen, und die UV-Koordinaten kommen als neue, durchnummerierte UV-Map
+(AI_UV_1, AI_UV_2, ...) auf das Original. Vorhandene UV-Maps bleiben.
 """
 
 from . import preferences, props, history, operators, panel

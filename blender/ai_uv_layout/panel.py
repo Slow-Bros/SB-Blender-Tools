@@ -10,7 +10,7 @@ import textwrap
 
 import bpy
 
-from . import history, models, preferences
+from . import history, mesh_io, models, preferences
 from .operators import is_running
 
 STATUS_ICONS = {
@@ -66,11 +66,13 @@ class VIEW3D_PT_sb_ai_uv_layout(bpy.types.Panel):
         if obj is not None and obj.type == "MESH":
             box.label(text=obj.name, icon="MESH_DATA")
             box.label(text=f"{len(obj.data.polygons):,} faces")
-            active_uv = obj.data.uv_layers.active
-            if active_uv is not None:
-                box.label(text=f"UV map '{active_uv.name}' will be overwritten", icon="UV")
+            count = len(obj.data.uv_layers)
+            if count >= mesh_io.MAX_UV_LAYERS:
+                box.label(text=f"{count} UV maps, Blender's maximum. Delete one first", icon="ERROR")
             else:
-                box.label(text="No UV map yet", icon="UV")
+                existing = f"{count} UV map{'s' if count != 1 else ''}, " if count else ""
+                box.label(text=f"{existing}result becomes '{mesh_io.next_uv_layer_name(obj.data)}'",
+                          icon="UV")
         else:
             box.label(text="No mesh selected", icon="INFO")
         if context.mode != "OBJECT":
@@ -81,11 +83,6 @@ class VIEW3D_PT_sb_ai_uv_layout(bpy.types.Panel):
         col.enabled = not running
         col.label(text="AI Model")
         col.prop(settings, "model", text="")
-        col.separator()
-        col.prop(settings, "apply_to_source")
-        sub = col.row()
-        sub.enabled = not settings.apply_to_source
-        sub.prop(settings, "hide_source")
 
         layout.separator()
 

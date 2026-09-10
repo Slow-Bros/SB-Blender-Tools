@@ -46,20 +46,6 @@ class SBAIUVSettings(bpy.types.PropertyGroup):
         # Property auf 0, und das ist keine der Modell-Nummern.
         default=models.enum_number(models.MODELS[0]["key"]),
     )
-    apply_to_source: BoolProperty(
-        name="Apply to Original",
-        description=(
-            "Write the UV map onto the active object itself, overwriting its "
-            "active UV map. Off: a copy named <name>_uv gets the UVs and the "
-            "original stays untouched"
-        ),
-        default=False,
-    )
-    hide_source: BoolProperty(
-        name="Hide Original",
-        description="Hide the source object in the viewport after a successful import; it is kept",
-        default=False,
-    )
     history_this_project: BoolProperty(
         name="This Project Only",
         description=(

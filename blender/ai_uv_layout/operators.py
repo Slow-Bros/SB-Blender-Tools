@@ -251,11 +251,7 @@ class _UVModal:
 
         try:
             if source is not None:
-                obj, stats = mesh_io.apply_uvs(
-                    context, uv_obj, source, name=name,
-                    apply_to_source=settings.apply_to_source,
-                    hide_source=settings.hide_source,
-                )
+                obj, stats = mesh_io.apply_uvs(context, uv_obj, source)
             else:
                 obj, stats = mesh_io.keep_standalone(context, uv_obj, name)
         except Exception as e:  # noqa: BLE001
@@ -264,7 +260,7 @@ class _UVModal:
             self.report({"ERROR"}, settings.last_error)
             return self._finish(context)
 
-        summary = f"{obj.name}: UV map '{stats['layer']}' on {stats['faces']} faces"
+        summary = f"{obj.name}: new UV map '{stats['layer']}' on {stats['faces']} faces"
         settings.last_result = summary
         log(summary)
 
@@ -310,8 +306,8 @@ class SB_OT_ai_uv_layout(_UVModal, bpy.types.Operator):
     bl_idname = "sb.ai_uv_layout"
     bl_label = "AI UV Layout"
     bl_description = (
-        "Unwrap the active mesh through the Scenario API and write the UV map onto "
-        "a copy of it, or onto the object itself"
+        "Unwrap the active mesh through the Scenario API and add the result as a new "
+        "UV map on the object. Existing UV maps are kept"
     )
     bl_options = {"REGISTER"}
 
@@ -336,6 +332,15 @@ class SB_OT_ai_uv_layout(_UVModal, bpy.types.Operator):
 
         source = context.active_object
         spec = models.get(settings.model)
+
+        # Vor dem Upload pruefen, nicht erst beim Transfer: der Job kostet Geld
+        if len(source.data.uv_layers) >= mesh_io.MAX_UV_LAYERS:
+            settings.last_error = (
+                f"'{source.name}' already has {mesh_io.MAX_UV_LAYERS} UV maps, Blender's maximum. "
+                "Delete one before adding another result."
+            )
+            self.report({"ERROR"}, settings.last_error)
+            return {"CANCELLED"}
 
         job = _Job()
         job.temp_dir = tempfile.mkdtemp(prefix="sb_ai_uv_", dir=bpy.app.tempdir or None)

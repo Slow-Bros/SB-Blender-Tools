@@ -29,8 +29,8 @@ Scenario API credentials, entered once in either add-on's preferences.
   the result as a new object at the original's position.
   Setup and details: [docs/ai-retopo.md](docs/ai-retopo.md).
 - **AI UV Layout** (`blender/ai_uv_layout`) — sends the active mesh to the
-  Hunyuan UV unwrapping model and writes the returned UV layout onto the
-  original geometry, as a copy or in place. Typically the next step after
+  Hunyuan UV unwrapping model and adds the returned UV layout to the object
+  as a new, numbered UV map. Typically the next step after
   AI Retopo. Setup and details: [docs/ai-uv-layout.md](docs/ai-uv-layout.md).
 
 Target: Blender 4.2+ extension format (`blender_manifest.toml`); currently developed against Blender 5.x.

@@ -169,57 +169,78 @@ def read_co(obj):
     return buf.reshape(-1, 3)
 
 
-# --- default path: UVs onto a copy, geometry and placement of the original
-mesh_objects_before = {o.name for o in bpy.data.objects}
+# --- main path: the result becomes a new UV map on the original. The cube
+# already has a map ('UVMap'), which must survive untouched; the new one is
+# numbered, active for editing and rendering.
+objects_before = {o.name for o in bpy.data.objects}
 uv_obj = mesh_io.import_uv_mesh(ctx, result_path)
 assert uv_obj.data.uv_layers.active is not None
 assert mesh_io.topology_matches(src.data, uv_obj.data)
-new, stats = mesh_io.apply_uvs(ctx, uv_obj, src, name="Retopo_uv")
+assert mesh_io.next_uv_layer_name(src.data) == "AI_UV_1"
+same, stats = mesh_io.apply_uvs(ctx, uv_obj, src)
 ctx.view_layer.update()
-assert new.name == "Retopo_uv" and new is not src, new.name
-assert stats["method"] == mesh_io.METHOD_INDEX, stats
+assert same is src
+assert stats["method"] == mesh_io.METHOD_INDEX and stats["layer"] == "AI_UV_1", stats
 assert stats["coverage"] > 0.99 and stats["faces"] == 6 and stats["quads"] == 6, stats
-assert not stats["applied_to_source"]
-assert {o.name for o in bpy.data.objects} == mesh_objects_before | {"Retopo_uv"}, "UV carrier must be removed"
-assert new.matrix_world == src.matrix_world and new.parent == src.parent
-assert [c.name for c in new.users_collection] == ["Retopo"], [c.name for c in new.users_collection]
-assert np.allclose(read_co(new), read_co(src)), "geometry must stay the original's"
-assert np.allclose(read_uv(new), expected, atol=1e-5), "UVs must be the model's, corner for corner"
-assert np.allclose(read_uv(src).ravel(), src_uv_before), "the original must keep its own UVs"
-assert [m.type for m in new.modifiers] == ["SUBSURF"], "modifiers travel with the copy"
-assert "sharp_face" not in new.data.attributes, "smooth shading"
-assert ctx.view_layer.objects.active == new and new.select_get() and not src.select_get()
-assert not src.hide_get()
-print(f"[TEST] UV transfer onto a copy ok: {stats}")
+assert {o.name for o in bpy.data.objects} == objects_before, "UV carrier must be removed, no copy made"
+assert [l.name for l in src.data.uv_layers] == ["UVMap", "AI_UV_1"], [l.name for l in src.data.uv_layers]
+assert src.data.uv_layers.active.name == "AI_UV_1"
+assert src.data.uv_layers["AI_UV_1"].active_render
+assert np.allclose(read_uv(src), expected, atol=1e-5), "UVs must be the model's, corner for corner"
+old = np.empty(len(src.data.loops) * 2, dtype=np.float32)
+src.data.uv_layers["UVMap"].data.foreach_get("uv", old)
+assert np.array_equal(old, src_uv_before), "the existing map must be untouched"
+assert [m.type for m in src.modifiers] == ["SUBSURF"], "modifiers stay"
+assert "sharp_face" not in src.data.attributes, "smooth shading"
+assert ctx.view_layer.objects.active == src and src.select_get()
+print(f"[TEST] new UV map on the original ok: {stats}")
 
-# --- apply to the original: a mesh without any UV map gets 'UVMap'
+# --- a second result is another map, numbered on. Deleting a map does not
+# reuse its number, and a name in between that is not ours is ignored.
+uv_obj = mesh_io.import_uv_mesh(ctx, result_path)
+_, stats2 = mesh_io.apply_uvs(ctx, uv_obj, src)
+assert stats2["layer"] == "AI_UV_2", stats2
+src.data.uv_layers.remove(src.data.uv_layers["AI_UV_1"])
+src.data.uv_layers.new(name="Lightmap")
+assert mesh_io.next_uv_layer_name(src.data) == "AI_UV_3"
+uv_obj = mesh_io.import_uv_mesh(ctx, result_path)
+_, stats3 = mesh_io.apply_uvs(ctx, uv_obj, src)
+assert [l.name for l in src.data.uv_layers] == ["UVMap", "AI_UV_2", "Lightmap", "AI_UV_3"],     [l.name for l in src.data.uv_layers]
+print("[TEST] numbering ok")
+
+# --- a mesh without any UV map gets AI_UV_1
 uv_obj = mesh_io.import_uv_mesh(ctx, result_path)
 bpy.ops.mesh.primitive_cube_add(calc_uvs=False)
 plain = ctx.active_object
 plain.name = "Plain"
 assert not plain.data.uv_layers
-same, stats2 = mesh_io.apply_uvs(ctx, uv_obj, plain, name="Plain_uv",
-                                 apply_to_source=True, hide_source=True)
-assert same is plain and stats2["applied_to_source"], stats2
-assert stats2["layer"] == "UVMap" and stats2["method"] == mesh_io.METHOD_INDEX, stats2
-assert "Plain_uv" not in bpy.data.objects
-assert not plain.hide_get(), "hide_source means nothing when the original is the target"
+_, stats4 = mesh_io.apply_uvs(ctx, uv_obj, plain)
+assert stats4["layer"] == "AI_UV_1" and len(plain.data.uv_layers) == 1, stats4
 assert np.allclose(read_uv(plain), expected, atol=1e-5)
-print(f"[TEST] UV transfer onto the original ok: {stats2}")
+print(f"[TEST] first map on a bare mesh ok: {stats4}")
 
-# --- hide the original on the copy path
+# --- Blender allows eight UV maps per mesh; the ninth is refused before
+# anything is touched, and the carrier is still cleaned up
+bpy.ops.mesh.primitive_cube_add(calc_uvs=False)
+full = ctx.active_object
+full.name = "Full"
+for i in range(mesh_io.MAX_UV_LAYERS):
+    full.data.uv_layers.new(name=f"map{i}")
+objects_before = {o.name for o in bpy.data.objects}
 uv_obj = mesh_io.import_uv_mesh(ctx, result_path)
-new2, _ = mesh_io.apply_uvs(ctx, uv_obj, src, name="Retopo_uv_2", hide_source=True)
-assert new2.name == "Retopo_uv_2"
-assert src.hide_get() and "Retopo" in bpy.data.objects, "source must be hidden, not deleted"
-src.hide_set(False)
-bpy.data.objects.remove(new2, do_unlink=True)
-print("[TEST] hide original ok")
+try:
+    mesh_io.apply_uvs(ctx, uv_obj, full)
+    raise AssertionError("a ninth UV map must be refused")
+except mesh_io.MeshIOError as e:
+    assert "maximum" in str(e), e
+assert len(full.data.uv_layers) == mesh_io.MAX_UV_LAYERS
+assert {o.name for o in bpy.data.objects} == objects_before, "carrier must be removed"
+print("[TEST] UV map limit refused cleanly")
 
 # --- topology mismatch is an error, not a fallback. Phototron's Data Transfer
 # fallback with topology mapping cannot transfer anything between different
 # topologies, so it was dropped in favour of a message that names the numbers.
-# Nothing may be left behind: no copy, no carrier, no new UV map on the target.
+# Nothing may be left behind: no carrier, no new UV map on the target.
 bpy.ops.mesh.primitive_uv_sphere_add(segments=8, ring_count=4)
 ball = ctx.active_object
 ball.name = "Ball"
@@ -228,19 +249,19 @@ objects_before = {o.name for o in bpy.data.objects}
 uv_obj = mesh_io.import_uv_mesh(ctx, result_path)
 assert not mesh_io.topology_matches(ball.data, uv_obj.data)
 try:
-    mesh_io.apply_uvs(ctx, uv_obj, ball, name="Ball_uv")
+    mesh_io.apply_uvs(ctx, uv_obj, ball)
     raise AssertionError("a topology mismatch must be rejected")
 except mesh_io.MeshIOError as e:
     assert "6 faces / 24 corners" in str(e) and "32 faces / 112 corners" in str(e), e
-assert {o.name for o in bpy.data.objects} == objects_before, "copy and carrier must be cleaned up"
+assert {o.name for o in bpy.data.objects} == objects_before, "carrier must be cleaned up"
 assert np.array_equal(read_uv(ball), ball_uv_before), "the original must be untouched"
-# the same onto the original itself, without a UV map: none may be created
+# the same on a mesh without a UV map: none may be created
 bpy.ops.mesh.primitive_uv_sphere_add(segments=8, ring_count=4, calc_uvs=False)
 bare = ctx.active_object
 bare.name = "Bare"
 uv_obj = mesh_io.import_uv_mesh(ctx, result_path)
 try:
-    mesh_io.apply_uvs(ctx, uv_obj, bare, name="Bare_uv", apply_to_source=True)
+    mesh_io.apply_uvs(ctx, uv_obj, bare)
     raise AssertionError("a topology mismatch must be rejected")
 except mesh_io.MeshIOError:
     pass
@@ -352,6 +373,23 @@ assert not scene.sb_ai_uv.running
 # emptied here, empty there: it is the same store
 assert retopo_preferences.get_credentials(ctx) == ("", "")
 print("[TEST] operator credential guard ok")
+
+# a mesh at the UV map limit is refused before anything is uploaded
+prefs.scenario_api_key = "k"
+prefs.scenario_api_secret = "s"
+bpy.ops.object.select_all(action="DESELECT")
+full.select_set(True)
+ctx.view_layer.objects.active = full
+try:
+    res = bpy.ops.sb.ai_uv_layout()
+except RuntimeError as e:
+    assert "maximum" in str(e), e
+    res = {"CANCELLED"}
+assert res == {"CANCELLED"} and not scene.sb_ai_uv.running
+assert "maximum" in scene.sb_ai_uv.last_error
+prefs.scenario_api_key = ""
+prefs.scenario_api_secret = ""
+print("[TEST] UV map limit checked before upload")
 
 addon_utils.disable("ai_uv_layout", default_set=True)
 assert "sb_ai_uv" not in bpy.types.Scene.bl_rna.properties

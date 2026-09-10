@@ -21,6 +21,7 @@ ist mehr wert als ein Ergebnis, das nach einem aussieht.
 """
 
 import os
+import re
 
 import bpy
 import numpy as np
@@ -28,7 +29,6 @@ from mathutils import Matrix
 
 from .log import log
 
-UV_LAYER_NAME = "UVMap"
 UPLOAD_CONTENT_TYPE = "model/obj"
 
 METHOD_INDEX = "index"            # Kopie nach Loop-Index, der einzige Weg auf ein Original
@@ -241,15 +241,40 @@ def uv_coverage(uv_layer):
 
 # -- Transfer -------------------------------------------------------------
 
-def _ensure_uv_layer(mesh):
-    layer = mesh.uv_layers.active
+UV_LAYER_PREFIX = "AI_UV"
+MAX_UV_LAYERS = 8  # Blenders Grenze pro Mesh
+_NUMBERED = re.compile(re.escape(UV_LAYER_PREFIX) + r"_(\d+)$")
+
+
+def next_uv_layer_name(mesh):
+    """Name der naechsten Ergebnis-Map: AI_UV_1, AI_UV_2, ...
+
+    Vorhandene Maps werden nie ueberschrieben, jedes Ergebnis kommt als
+    weitere Map hinzu. Gezaehlt wird ueber die hoechste vergebene Nummer,
+    damit eine geloeschte Map keine Nummer doppelt vergibt.
+    """
+    highest = 0
+    for layer in mesh.uv_layers:
+        m = _NUMBERED.match(layer.name)
+        if m:
+            highest = max(highest, int(m.group(1)))
+    return f"{UV_LAYER_PREFIX}_{highest + 1}"
+
+
+def _new_uv_layer(mesh):
+    """Legt die Ergebnis-Map an und macht sie aktiv (Bearbeitung und Render)."""
+    if len(mesh.uv_layers) >= MAX_UV_LAYERS:
+        raise MeshIOError(
+            f"'{mesh.name}' already has {MAX_UV_LAYERS} UV maps, Blender's maximum. "
+            "Delete one before adding another result."
+        )
+    # do_init=False: Blender wuerde die neue Map sonst mit einer
+    # Standardprojektion fuellen, die die Kopie gleich ueberschreibt
+    layer = mesh.uv_layers.new(name=next_uv_layer_name(mesh), do_init=False)
     if layer is None:
-        # do_init=False: Blender wuerde die neue Map sonst mit einer
-        # Standardprojektion fuellen, die die Kopie gleich ueberschreibt
-        layer = mesh.uv_layers.new(name=UV_LAYER_NAME, do_init=False)
-        if layer is None:
-            raise MeshIOError("Could not add a UV map, the mesh already has the maximum of eight.")
-        mesh.uv_layers.active = layer
+        raise MeshIOError("Could not add a UV map.")
+    layer.active = True
+    layer.active_render = True
     return layer
 
 
@@ -261,13 +286,12 @@ def _copy_by_index(src_layer, dst_layer):
     return n
 
 
-def transfer_uvs(context, target, uv_obj):
-    """Schreibt die UVs von *uv_obj* Ecke fuer Ecke auf das Mesh von *target*.
+def transfer_uvs(target, uv_obj):
+    """Schreibt die UVs von *uv_obj* Ecke fuer Ecke in eine neue UV-Map von *target*.
 
     Voraussetzung ist dieselbe Topologie; sonst ist das ein Fehler, und die
-    Meldung nennt die Zahlen. Ueberschrieben wird die aktive UV-Map des Ziels;
-    hat es keine, wird 'UVMap' angelegt. Geprueft wird vor dem Anlegen, damit
-    ein Fehler das Ziel unveraendert laesst.
+    Meldung nennt die Zahlen. Geprueft wird vor dem Anlegen der Map, damit ein
+    Fehler das Ziel unveraendert laesst. Vorhandene Maps bleiben, wie sie sind.
 
     Returns: dict mit method, layer, faces, uv_faces, loops, uv_loops, coverage
     """
@@ -285,7 +309,7 @@ def transfer_uvs(context, target, uv_obj):
             "Expect this when the result is not OBJ, or when the mesh was edited after the job started."
         )
 
-    dst_layer = _ensure_uv_layer(dst_mesh)
+    dst_layer = _new_uv_layer(dst_mesh)
     copied = _copy_by_index(src_layer, dst_layer)
     dst_mesh.update()
     stats = {
@@ -297,7 +321,8 @@ def transfer_uvs(context, target, uv_obj):
         "uv_loops": len(src_mesh.loops),
         "coverage": uv_coverage(dst_layer),
     }
-    log(f"Topology match ({stats['faces']} faces): copied {copied} UV coordinates by loop index")
+    log(f"Topology match ({stats['faces']} faces): copied {copied} UV coordinates by loop index "
+        f"into new map '{dst_layer.name}'")
     log(f"UV coverage: {stats['coverage'] * 100:.1f}% of the corners carry a UV")
     return stats
 
@@ -334,47 +359,23 @@ def _select_only(context, obj):
         pass
 
 
-def duplicate_object(context, source_obj, name):
-    """Kopie von *source_obj* mit eigenem Mesh in denselben Collections, mit
-    demselben Parent und derselben Welt-Matrix."""
-    dup = source_obj.copy()
-    dup.data = source_obj.data.copy()
-    dup.name = name
-    dup.data.name = name
-    targets = list(source_obj.users_collection) or [context.scene.collection]
-    for coll in targets:
-        coll.objects.link(dup)
-    return dup
-
-
-def apply_uvs(context, uv_obj, source_obj, *, name, apply_to_source=False, hide_source=False):
-    """Uebertraegt die UVs des Ergebnisses auf das Original oder eine Kopie davon.
+def apply_uvs(context, uv_obj, target):
+    """Uebertraegt die UVs des Ergebnisses als neue UV-Map auf *target*.
 
     Das UV-Objekt wird danach entfernt; es war nur der Traeger der Koordinaten.
+    Schlaegt der Transfer fehl, bleibt das Ziel unveraendert.
 
-    Returns: (target_object, stats) mit stats aus transfer_uvs plus quads,
-    tris, ngons und applied_to_source
+    Returns: (target, stats) mit stats aus transfer_uvs plus quads, tris, ngons
     """
-    if source_obj is None or source_obj.type != "MESH":
+    if target is None or target.type != "MESH":
         raise MeshIOError("The target is not a mesh object.")
-
-    target = source_obj if apply_to_source else duplicate_object(context, source_obj, name)
     try:
-        stats = transfer_uvs(context, target, uv_obj)
-        _apply_smooth_shading(context, target)
-    except Exception:
-        if target is not source_obj:
-            remove_object(target)
-        raise
+        stats = transfer_uvs(target, uv_obj)
     finally:
         remove_object(uv_obj)
-
-    if hide_source and target is not source_obj:
-        source_obj.hide_set(True)
+    _apply_smooth_shading(context, target)
     _select_only(context, target)
-
     stats.update(face_stats(target.data))
-    stats["applied_to_source"] = target is source_obj
     return target, stats
 
 
@@ -398,7 +399,6 @@ def keep_standalone(context, uv_obj, name):
         "loops": len(uv_obj.data.loops),
         "uv_loops": len(uv_obj.data.loops),
         "coverage": uv_coverage(layer) if layer else 0.0,
-        "applied_to_source": False,
     }
     stats.update(face_stats(uv_obj.data))
     return uv_obj, stats
