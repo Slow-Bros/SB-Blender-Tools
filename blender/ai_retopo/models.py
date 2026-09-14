@@ -27,6 +27,11 @@ TRIS = "tris"
 
 BUNDLED_FILE = os.path.join(os.path.dirname(__file__), "models.json")
 
+# Upload-Limit fuer Modelle, deren Doku keines nennt (Meshy). Das groesste
+# dokumentierte Limit: Hunyuan nimmt 200 MB, Tripo 150 MB. Die Pruefung vor
+# dem Upload passiert im Client, das Panel warnt schon vorher.
+DEFAULT_UPLOAD_LIMIT_MB = 200
+
 REQUIRED_KEYS = ("key", "id", "label", "density", "file_param",
                  "polygon_param", "polygon_values")
 
@@ -45,6 +50,7 @@ FALLBACK_MODELS = [
         "polygon_param": "polygonType",
         "polygon_values": {QUADS: "quadrilateral", TRIS: "triangle"},
         "level_param": "faceLevel",
+        "upload_limit_mb": DEFAULT_UPLOAD_LIMIT_MB,
         "extra": {},
     },
 ]
@@ -96,6 +102,10 @@ def _validate(entry):
         entry["count_range"] = _parse_count_range(entry["key"], entry["count_range"])
     else:
         entry.setdefault("level_param", "faceLevel")
+
+    limit = entry.setdefault("upload_limit_mb", DEFAULT_UPLOAD_LIMIT_MB)
+    if isinstance(limit, bool) or not isinstance(limit, (int, float)) or limit <= 0:
+        raise ValueError(f"'{entry['key']}' upload_limit_mb is not a positive number")
 
     entry.setdefault("description", entry["label"])
     entry.setdefault("extra", {})
@@ -197,6 +207,11 @@ def count_range_label(spec, polygon_key):
     if bounds is None:
         return ""
     return f"{bounds[0]:,} to {bounds[1]:,}"
+
+
+def upload_limit_bytes(spec):
+    """Groesste Datei, die dieses Modell annimmt."""
+    return int(spec["upload_limit_mb"] * 1024 * 1024)
 
 
 def build_request(spec, asset_id, polygon_key, *, face_level=None, target_faces=None):

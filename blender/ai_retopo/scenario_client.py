@@ -22,7 +22,7 @@ import urllib.request
 API_BASE = "https://api.cloud.scenario.com"
 # Modelle und ihre Parameter stehen in models.py
 PART_SIZE = 5 * 1024 * 1024
-MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # Limit der Hunyuan-Modelle
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # Limit der Hunyuan-Modelle, upload_3d nimmt auch ein anderes
 REQUEST_TIMEOUT = 60
 
 # Stufen der level-basierten Modelle; das Panel-Enum muss genau diese kennen
@@ -129,12 +129,17 @@ class ScenarioClient:
 
     # -- Upload ---------------------------------------------------------
 
-    def upload_3d(self, data, file_name, content_type, on_progress=None):
-        """Laedt eine 3D-Datei hoch und gibt die Asset-ID zurueck."""
-        if len(data) > MAX_UPLOAD_BYTES:
+    def upload_3d(self, data, file_name, content_type, on_progress=None,
+                  max_bytes=MAX_UPLOAD_BYTES):
+        """Laedt eine 3D-Datei hoch und gibt die Asset-ID zurueck.
+
+        max_bytes ist das Limit des Modells, das die Datei bekommt; die Modelle
+        unterscheiden sich darin (Tripo 150 MB, Hunyuan 200 MB).
+        """
+        if len(data) > max_bytes:
             raise ScenarioError(
-                f"File too large ({len(data) / 1024 / 1024:.0f} MB, limit is 200 MB). "
-                "Enable pre-decimation."
+                f"File too large ({len(data) / 1024 / 1024:.0f} MB, limit is "
+                f"{max_bytes / 1024 / 1024:.0f} MB). Enable pre-decimation."
             )
         parts_count = max(1, -(-len(data) // PART_SIZE))
         self._log(f"Upload {file_name}: {len(data) / 1024 / 1024:.1f} MB in {parts_count} part(s)")

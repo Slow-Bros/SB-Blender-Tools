@@ -12,7 +12,11 @@
     "",
     "count_range is [min, max], or {quads: [min, max], tris: [min, max]}",
     "when the model accepts a different range per polygon type. Values",
-    "outside the range are clamped before the request is sent."
+    "outside the range are clamped before the request is sent.",
+    "",
+    "upload_limit_mb is the largest file the model accepts, as its",
+    "documentation states it. A model without one gets the default in",
+    "models.py; Meshy documents no limit."
   ],
   "version": 1,
   "models": [
@@ -29,6 +33,7 @@
         "tris": "triangle"
       },
       "level_param": "faceLevel",
+      "upload_limit_mb": 200,
       "extra": {
         "geometryFileFormat": "obj"
       }
@@ -66,6 +71,7 @@
       },
       "count_param": "faceLimit",
       "count_range": {"quads": [500, 10000], "tris": [500, 20000]},
+      "upload_limit_mb": 150,
       "extra": {
         "bake": false
       }

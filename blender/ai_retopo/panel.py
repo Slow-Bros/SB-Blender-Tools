@@ -5,7 +5,7 @@ import textwrap
 
 import bpy
 
-from . import history, models, preferences
+from . import history, mesh_io, models, preferences
 from .operators import is_running
 
 STATUS_ICONS = {
@@ -29,6 +29,27 @@ def _pretty_size(size_mb):
     if size_mb > 0.0:
         return f"{size_mb * 1024:.0f} KB"
     return "size unknown"
+
+
+def _draw_upload_size(box, mesh, spec, settings):
+    """Warnt unter der Face-Zahl, wenn der Upload das Limit des Modells sprengt.
+
+    Geschaetzt aus den Zaehlern des Meshes, wie es exportiert wuerde: mit
+    Pre-Decimation zaehlt deren Ziel. Die zweite Zeile nennt die Face-Zahl,
+    auf die die Pre-Decimation gehen muss, damit es passt.
+    """
+    counts = (len(mesh.vertices), len(mesh.loops), len(mesh.polygons))
+    limit = models.upload_limit_bytes(spec)
+    decimate = settings.pre_decimate_target if settings.pre_decimate else 0
+    size = mesh_io.estimate_upload_bytes(*counts, decimate_target=decimate)
+    if size <= limit:
+        return
+    fit = mesh_io.faces_within_upload_limit(*counts, limit)
+    # Kurz genug fuer die Sidebar-Breite; welches Modell das Limit setzt,
+    # steht direkt darunter in der Modellwahl
+    box.label(text=f"Upload about {size / 1024 / 1024:.0f} MB, limit is {limit / 1024 / 1024:.0f} MB",
+              icon="ERROR")
+    box.label(text=f"Reduce to {fit:,} faces (Pre-Decimation)", icon="BLANK1")
 
 
 class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
@@ -57,11 +78,14 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
             box.label(text="Scenario API key is missing", icon="ERROR")
             box.operator("preferences.addon_show", text="Add-on Preferences").module = __package__
 
+        spec = models.get(settings.model)
+
         # -- Object -------------------------------------------------------
         box = layout.box()
         if obj is not None and obj.type == "MESH":
             box.label(text=obj.name, icon="MESH_DATA")
             box.label(text=f"{len(obj.data.polygons):,} faces")
+            _draw_upload_size(box, obj.data, spec, settings)
         else:
             box.label(text="No mesh selected", icon="INFO")
         if context.mode != "OBJECT":
@@ -72,8 +96,6 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
         col.enabled = not running
         col.label(text="AI Model")
         col.prop(settings, "model", text="")
-
-        spec = models.get(settings.model)
 
         col.separator()
         col.label(text="Target Polygons")

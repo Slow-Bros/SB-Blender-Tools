@@ -138,6 +138,12 @@ try:
     raise AssertionError("unknown polygon key must raise")
 except ValueError:
     pass
+# Upload limits are per model, straight from each model's documentation:
+# Tripo takes 150 MB, Hunyuan 200 MB. Meshy documents none and gets the default.
+assert models.upload_limit_bytes(tripo) == 150 * 1024 * 1024
+assert models.upload_limit_bytes(models.get("hunyuan_polygen")) == 200 * 1024 * 1024
+assert models.get("meshy_remesh")["upload_limit_mb"] == models.DEFAULT_UPLOAD_LIMIT_MB
+assert all(models.upload_limit_bytes(m) > 0 for m in models.FALLBACK_MODELS)
 assert not models.LOAD_ERROR, models.LOAD_ERROR
 model_ids = [m["id"] for m in models.MODELS]
 assert "model_meshy-remesh" in model_ids, "Meshy is back in the registry"
@@ -157,6 +163,8 @@ with open(good, "w", encoding="utf-8") as f:
 loaded = models._read(good)
 assert loaded[0]["extra"] == {}, loaded                  # optional keys defaulted
 assert loaded[0]["description"] == "Custom", loaded
+assert loaded[0]["upload_limit_mb"] == models.DEFAULT_UPLOAD_LIMIT_MB, loaded
+assert models._validate({**loaded[0], "upload_limit_mb": 50})["upload_limit_mb"] == 50
 # a plain pair applies to both polygon types
 assert loaded[0]["count_range"] == {"quads": (10, 20), "tris": (10, 20)}, loaded
 split = models._validate({**loaded[0], "count_range": {"quads": [1, 2], "tris": [3, 4]}})
@@ -168,6 +176,9 @@ for broken in ({"models": []},
                {"models": [{**loaded[0], "count_range": [10, "20"]}]},
                {"models": [{**loaded[0], "count_range": {"quads": [1, 2]}}]},
                {"models": [{**loaded[0], "count_range": {"quads": [1, 2], "tris": [4, 3]}}]},
+               {"models": [{**loaded[0], "upload_limit_mb": 0}]},
+               {"models": [{**loaded[0], "upload_limit_mb": "150"}]},
+               {"models": [{**loaded[0], "upload_limit_mb": True}]},
                {"models": [loaded[0], loaded[0]]}):
     bad = os.path.join(reg_tmp, "bad.json")
     with open(bad, "w", encoding="utf-8") as f:
@@ -203,10 +214,67 @@ assert "Scan_sb_upload" not in bpy.data.objects, "temp object not cleaned up"
 assert src.select_get() and ctx.view_layer.objects.active == src, "selection not restored"
 print(f"[TEST] export ok: {info}")
 
+# The panel's size warning rests on an estimate from the mesh counters alone;
+# it has to match what the exporter actually writes, or the warning lies.
+eval_mesh = src.evaluated_get(ctx.evaluated_depsgraph_get()).data
+counts = (len(eval_mesh.vertices), len(eval_mesh.loops), len(eval_mesh.polygons))
+est = mesh_io.estimate_upload_bytes(*counts)
+real = os.path.getsize(glb)
+assert abs(est - real) / real < 0.02, (est, real, counts)
+# a mesh that fits keeps its face count, one that does not gets a smaller
+# target with some headroom, rounded to the thousands the field counts in
+assert mesh_io.faces_within_upload_limit(*counts, real * 2) == counts[2]
+fit = mesh_io.faces_within_upload_limit(*counts, real // 2)
+assert 1000 <= fit < counts[2] and fit % 1000 == 0, (fit, counts)
+assert mesh_io.estimate_upload_bytes(*counts, decimate_target=fit) <= real // 2, (fit, counts)
+# Tripo's 150 MB is roughly 8 million triangles of a closed mesh; a bigger
+# mesh must get a target below that limit, not above the mesh itself
+big = (5_000_000, 30_000_000, 10_000_000)
+assert mesh_io.estimate_upload_bytes(*big) > 150 * 1024 * 1024
+big_fit = mesh_io.faces_within_upload_limit(*big, 150 * 1024 * 1024)
+assert 1000 <= big_fit < 10_000_000 and big_fit % 1000 == 0, big_fit
+assert mesh_io.estimate_upload_bytes(*big, decimate_target=big_fit) <= 150 * 1024 * 1024
+assert mesh_io.estimate_upload_bytes(*big, decimate_target=12_000_000) == mesh_io.estimate_upload_bytes(*big)
+print(f"[TEST] upload size estimate ok: {est} vs {real} bytes, fit {fit} of {counts[2]}")
+
+# The panel warns under the face count only when the mesh is over the limit of
+# the selected model, and names the face count that fits
+class _Box:
+    def __init__(self):
+        self.lines = []
+
+    def label(self, text="", icon="NONE"):
+        self.lines.append((text, icon))
+
+settings = scene.sb_ai_retopo
+settings.pre_decimate = False
+box = _Box()
+panel._draw_upload_size(box, eval_mesh, tripo, settings)
+assert box.lines == [], box.lines
+tiny = {**tripo, "upload_limit_mb": real / 2 / 1024 / 1024}
+panel._draw_upload_size(box, eval_mesh, tiny, settings)
+assert len(box.lines) == 2 and box.lines[0][1] == "ERROR", box.lines
+assert "limit is 0 MB" in box.lines[0][0], box.lines
+assert f"Reduce to {fit:,} faces" in box.lines[1][0], box.lines
+# a pre-decimation target that fits silences the warning, one that does not keeps it
+settings.pre_decimate = True
+settings.pre_decimate_target = fit
+box = _Box()
+panel._draw_upload_size(box, eval_mesh, tiny, settings)
+assert box.lines == [], box.lines
+settings.pre_decimate_target = counts[2] + 1000
+panel._draw_upload_size(box, eval_mesh, tiny, settings)
+assert len(box.lines) == 2, box.lines
+settings.pre_decimate = False
+print("[TEST] panel upload warning ok")
+
 # Pre-decimate export
 glb2 = os.path.join(tmp, "upload_dec.glb")
 info2 = mesh_io.export_object_for_upload(ctx, src, glb2, decimate_target=500)
 assert os.path.getsize(glb2) < os.path.getsize(glb), "pre-decimate did not shrink file"
+# the estimate scales with the decimation ratio, like the exporter does
+est2 = mesh_io.estimate_upload_bytes(*counts, decimate_target=500)
+assert abs(est2 - os.path.getsize(glb2)) / os.path.getsize(glb2) < 0.1, (est2, os.path.getsize(glb2))
 print(f"[TEST] pre-decimate export ok: {info2}")
 
 # --- cleanup before upload (duplicate + loose vertices), as Phototron does
@@ -519,6 +587,13 @@ bpy.data.objects.remove(kept_obj, do_unlink=True)
 bpy.data.objects.remove(plain, do_unlink=True)
 
 # Pure-python API parsers
+# the client refuses a file over the model's limit before any request goes out
+_client = scenario_client.ScenarioClient("k", "s")
+try:
+    _client.upload_3d(b"x" * 2 * 1024 * 1024, "big.glb", "model/gltf-binary", max_bytes=1024 * 1024)
+    raise AssertionError("oversized upload accepted")
+except scenario_client.ScenarioError as e:
+    assert "limit is 1 MB" in str(e), e
 assert scenario_client.extract_job_id({"job": {"jobId": "j1"}}) == "j1"
 assert scenario_client.extract_job_id({"id": "j2"}) == "j2"
 assert scenario_client.extract_asset_ids({"job": {"metadata": {"assetIds": ["a", "b"]}}}) == ["a", "b"]

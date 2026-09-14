@@ -44,7 +44,7 @@ below this panel and takes the retopo result on to the next step.
 | Remove Stray Fragments | Delete separate parts the model placed outside the object. On by default. See *Stray fragments* below. |
 | Hide Original | Hide (not delete) the source object after a successful import. |
 | History | Past jobs of this project, with *Import Again* for a result that was never imported. See *History* below. |
-| Pre-Decimation | Decimate the upload copy before sending (API limit 200 MB). The original is untouched. |
+| Pre-Decimation | Decimate the upload copy before sending. The original is untouched. The upload limit depends on the model; see *Upload limit* below. |
 
 Requirements: Object Mode, active object is a mesh. One job at a time; the
 panel shows a progress bar and a cancel button while running. Progress and
@@ -58,11 +58,11 @@ with the same parent and world matrix, smooth shaded, selected and active.
 Three Scenario models are in the registry. They differ in how the polygon density
 is controlled, which is why the panel changes with the selected model.
 
-| Model | Model id | Density control | Topology | Result format |
-| --- | --- | --- | --- | --- |
-| Hunyuan PolyGen 1.5 | `model_tencent-smarttopology` | `faceLevel`: low / medium / high only | `polygonType`: `quadrilateral` / `triangle` | OBJ |
-| Meshy Remesh | `model_meshy-remesh` | `targetPolycount`: 100 to 300000 | `topology`: `quad` / `triangle` | untested |
-| Tripo Retopology | `model_tripo-retopology` | `faceLimit`: 500 to 20000 for triangles, 500 to 10000 for quads | `quad`: boolean | FBX |
+| Model | Model id | Density control | Topology | Upload limit | Result format |
+| --- | --- | --- | --- | --- | --- |
+| Hunyuan PolyGen 1.5 | `model_tencent-smarttopology` | `faceLevel`: low / medium / high only | `polygonType`: `quadrilateral` / `triangle` | 200 MB | OBJ |
+| Meshy Remesh | `model_meshy-remesh` | `targetPolycount`: 100 to 300000 | `topology`: `quad` / `triangle` | none documented, 200 MB assumed | untested |
+| Tripo Retopology | `model_tripo-retopology` | `faceLimit`: 500 to 20000 for triangles, 500 to 10000 for quads | `quad`: boolean | 150 MB | FBX |
 
 A target face count is approximate. It is what the model aims for, not a
 guarantee, so the result can land somewhat above or below. Values outside the
@@ -81,6 +81,28 @@ options as the *Detail* dropdown in Phototron, and the resulting face count
 depends on the level and on the input mesh. Pick Tripo when a specific number
 matters. Tripo is called with `bake: false` because the upload carries no
 textures, so baking would have nothing to project.
+
+### Upload limit
+
+Each model states its own maximum for the uploaded file: Tripo takes 150 MB,
+Hunyuan 200 MB, Meshy documents none and gets the 200 MB default. The limits
+are in the registry as `upload_limit_mb`, and the client refuses a larger
+file before any request goes out. Tripo documents no limit on the input face
+count, only on the file size.
+
+The panel says beforehand whether the mesh fits. Under the face count of the
+active object it shows the estimated upload size when that exceeds the limit
+of the selected model, and the face count the pre-decimation has to go to
+so it fits, with ten percent headroom. The estimate comes from the counters
+of the mesh as it is, before modifiers, like the face count above it, so it
+costs nothing per redraw: the exporter writes twelve
+bytes per vertex and three indices per triangle, and without normals and UVs
+it splits no vertices. Measured against real exports the estimate is within
+one percent, and it scales with the decimation ratio the way the exporter
+does. With pre-decimation switched on the estimate uses its target, so the
+warning disappears once the target is low enough. What the estimate cannot
+know is the cleanup: a mesh full of duplicate vertices exports smaller than
+estimated, and the check in the client measures the real file.
 
 Tripo returns its result as FBX rather than OBJ or GLB. The download recognises
 that from the file's magic bytes even when the MIME type is uninformative, and
@@ -133,7 +155,8 @@ names, ranges and the values each model uses for quads and triangles. Adding a
 model, correcting a range or dropping one that is gone means editing that file
 and restarting Blender, not editing Python. A count model's `count_range` is
 either one `[min, max]` pair for both polygon types or an object with a pair
-per type, `{"quads": [500, 10000], "tris": [500, 20000]}`.
+per type, `{"quads": [500, 10000], "tris": [500, 20000]}`. `upload_limit_mb`
+is optional and defaults to 200.
 
 There is deliberately no interface around this. An earlier version had buttons
 to refresh a catalogue from the API, check single model ids, export the list for
@@ -271,7 +294,8 @@ needs manual cleanup.
 ```
 
 The test needs no network access. It covers registration, export with the
-pre-upload cleanup, pre-decimation, the fit tolerances, a simulated result round
+pre-upload cleanup, pre-decimation, the upload size estimate against a real
+export, the fit tolerances, a simulated result round
 trip with a placement check, a result carrying a stray fragment, and the API
 response parsers. The live API path is exercised manually in Blender with real
 credentials.

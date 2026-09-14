@@ -43,6 +43,47 @@ class MeshIOError(Exception):
 
 # -- Export ---------------------------------------------------------------
 
+# Bytes, die der glTF-Exporter mit den Optionen von export_object_for_upload
+# pro Vertex (3 x float32) und pro Dreieck (3 Indizes) schreibt, plus der
+# JSON-Kopf. Ohne Normalen und UVs teilt der Exporter keine Vertices auf, die
+# Zahl der Vertices bleibt also die des Meshes. Gegen echte Exporte gemessen:
+# die Schaetzung liegt unter einem Prozent daneben.
+GLB_HEADER_BYTES = 1024
+GLB_BYTES_PER_VERTEX = 12
+GLB_MAX_UINT16_VERTICES = 65535
+
+
+def estimate_upload_bytes(vertex_count, loop_count, face_count, decimate_target=0):
+    """Groesse des GLB, das export_object_for_upload aus diesem Mesh macht.
+
+    Nur aus den Zaehlern des Meshes, damit das Panel es bei jedem Redraw
+    rechnen kann. Die Dreiecke ergeben sich aus den Loops: ein Polygon mit n
+    Ecken wird zu n-2 Dreiecken. Eine Pre-Decimation auf decimate_target
+    Faces skaliert Vertices und Dreiecke im selben Verhaeltnis, deshalb
+    skaliert die Groesse mit dem Verhaeltnis der Face-Zahlen.
+    """
+    triangles = max(0, loop_count - 2 * face_count)
+    index_bytes = 2 if vertex_count <= GLB_MAX_UINT16_VERTICES else 4
+    payload = GLB_BYTES_PER_VERTEX * vertex_count + 3 * index_bytes * triangles
+    if decimate_target and face_count > decimate_target:
+        payload *= decimate_target / face_count
+    return GLB_HEADER_BYTES + int(payload)
+
+
+def faces_within_upload_limit(vertex_count, loop_count, face_count, limit_bytes, margin=0.9):
+    """Zielzahl fuer die Pre-Decimation, mit der der Upload unter dem Limit bleibt.
+
+    Gibt die Face-Zahl selbst zurueck, wenn das Mesh schon passt. Sonst die
+    Zahl, die mit etwas Luft (margin) unter das Limit fuehrt, auf Tausender
+    abgerundet, weil das Feld in Tausender-Schritten zaehlt.
+    """
+    size = estimate_upload_bytes(vertex_count, loop_count, face_count)
+    if size <= limit_bytes:
+        return face_count
+    fit = face_count * limit_bytes * margin / size
+    return max(1000, int(fit // 1000) * 1000)
+
+
 def cleanup_mesh(mesh, merge_distance=0.0001):
     """Mesh-Cleanup vor dem Upload, identisch zu Phototron (convertObjToGlb):
     doppelte Vertices verschmelzen, lose Geometrie ohne Faces loeschen,

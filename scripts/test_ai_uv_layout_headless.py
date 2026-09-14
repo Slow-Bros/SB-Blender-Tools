@@ -424,6 +424,13 @@ assert len(bpy.data.objects) == count_before, "rejected import must be cleaned u
 print("[TEST] result without UVs rejected")
 
 # --- pure-python API parsers
+# the client refuses a file over the given limit before any request goes out
+_client = scenario_client.ScenarioClient("k", "s")
+try:
+    _client.upload_3d(b"x" * 2 * 1024 * 1024, "big.glb", "model/gltf-binary", max_bytes=1024 * 1024)
+    raise AssertionError("oversized upload accepted")
+except scenario_client.ScenarioError as e:
+    assert "limit is 1 MB" in str(e), e
 assert scenario_client.extract_job_id({"job": {"jobId": "j1"}}) == "j1"
 assert scenario_client.extract_job_id({"id": "j2"}) == "j2"
 assert scenario_client.extract_asset_ids({"job": {"metadata": {"assetIds": ["a", "b"]}}}) == ["a", "b"]
