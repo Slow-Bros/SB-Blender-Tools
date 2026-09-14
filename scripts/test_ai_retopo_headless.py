@@ -104,22 +104,40 @@ for spec in models.MODELS:
         for k, v in spec.get("extra", {}).items():
             assert body[k] == v, body
         if models.uses_count(spec):
+            lo, hi = models.count_range(spec, pk)
             got = body[spec["count_param"]]
-            assert spec["count_min"] <= got <= spec["count_max"], (spec["key"], got)
+            assert lo <= got <= hi, (spec["key"], pk, got)
             # a value outside the model's range must be clamped, never sent raw
             low = models.build_request(spec, "a", pk, target_faces=1)
             high = models.build_request(spec, "a", pk, target_faces=10 ** 9)
-            assert low[spec["count_param"]] == spec["count_min"], low
-            assert high[spec["count_param"]] == spec["count_max"], high
+            assert low[spec["count_param"]] == lo, low
+            assert high[spec["count_param"]] == hi, high
+            assert models.count_range_label(spec, pk) == f"{lo:,} to {hi:,}"
         else:
             assert body[spec["level_param"]] == "low", body
             assert "count_param" not in spec, spec
+            assert models.count_range(spec, pk) is None
+            assert models.count_range_label(spec, pk) == ""
+            assert models.clamp_count(spec, 7, pk) == 7
 try:
     models.build_request(models.MODELS[0], "a", "bogus")
     raise AssertionError("unknown polygon key must raise")
 except ValueError:
     pass
 assert models.get("does-not-exist")["key"] == first_key
+# Tripo takes at most 10,000 faces for quads but 20,000 for triangles; a job
+# with 20,000 quads went through once and failed at Scenario after the upload
+tripo = models.get("tripo_retopology")
+assert tripo["id"] == "model_tripo-retopology", tripo
+assert models.count_range(tripo, models.QUADS) == (500, 10000), tripo["count_range"]
+assert models.count_range(tripo, models.TRIS) == (500, 20000), tripo["count_range"]
+assert models.build_request(tripo, "a", models.QUADS, target_faces=20000)["faceLimit"] == 10000
+assert models.build_request(tripo, "a", models.TRIS, target_faces=20000)["faceLimit"] == 20000
+try:
+    models.count_range(tripo, "bogus")
+    raise AssertionError("unknown polygon key must raise")
+except ValueError:
+    pass
 assert not models.LOAD_ERROR, models.LOAD_ERROR
 model_ids = [m["id"] for m in models.MODELS]
 assert "model_meshy-remesh" in model_ids, "Meshy is back in the registry"
@@ -134,14 +152,22 @@ with open(good, "w", encoding="utf-8") as f:
         "key": "custom", "id": "model_custom-x", "label": "Custom",
         "density": "count", "file_param": "model", "polygon_param": "topology",
         "polygon_values": {"quads": "quad", "tris": "triangle"},
-        "count_param": "n", "count_min": 10, "count_max": 20,
+        "count_param": "n", "count_range": [10, 20],
     }]}, f)
 loaded = models._read(good)
 assert loaded[0]["extra"] == {}, loaded                  # optional keys defaulted
 assert loaded[0]["description"] == "Custom", loaded
+# a plain pair applies to both polygon types
+assert loaded[0]["count_range"] == {"quads": (10, 20), "tris": (10, 20)}, loaded
+split = models._validate({**loaded[0], "count_range": {"quads": [1, 2], "tris": [3, 4]}})
+assert split["count_range"] == {"quads": (1, 2), "tris": (3, 4)}, split
 for broken in ({"models": []},
                {"models": [{"key": "a"}]},
-               {"models": [{**loaded[0], "count_min": 99, "count_max": 1}]},
+               {"models": [{**loaded[0], "count_range": [99, 1]}]},
+               {"models": [{**loaded[0], "count_range": [10]}]},
+               {"models": [{**loaded[0], "count_range": [10, "20"]}]},
+               {"models": [{**loaded[0], "count_range": {"quads": [1, 2]}}]},
+               {"models": [{**loaded[0], "count_range": {"quads": [1, 2], "tris": [4, 3]}}]},
                {"models": [loaded[0], loaded[0]]}):
     bad = os.path.join(reg_tmp, "bad.json")
     with open(bad, "w", encoding="utf-8") as f:
@@ -497,6 +523,21 @@ assert scenario_client.extract_job_id({"job": {"jobId": "j1"}}) == "j1"
 assert scenario_client.extract_job_id({"id": "j2"}) == "j2"
 assert scenario_client.extract_asset_ids({"job": {"metadata": {"assetIds": ["a", "b"]}}}) == ["a", "b"]
 assert scenario_client.extract_asset_ids({"job": {"result": {"assetId": "x"}}}) == ["x"]
+# A failed job carries its reason under metadata: the hint says what to change,
+# the error is generic plus a support id. Before, neither was read and the
+# console only said "Job failed: failure".
+failed = {"job": {"status": "failure", "metadata": {
+    "error": "An internal error occurred. Please contact support and provide this id: error_X",
+    "hint": "Reduce the face_limit parameter to a value between 500 and 10000 for this model.",
+}}}
+reason, detail = scenario_client.job_failure_reason(failed)
+assert reason.startswith("Reduce the face_limit"), reason
+assert "error_X" in detail, detail
+reason, detail = scenario_client.job_failure_reason(
+    {"job": {"status": "failure", "metadata": {"error": "boom", "hint": None}}})
+assert (reason, detail) == ("boom", ""), (reason, detail)
+assert scenario_client.job_failure_reason({"job": {"status": "failure"}}) == ("", "")
+assert scenario_client.job_failure_reason({"status": "failure", "metadata": {"hint": " h "}}) == ("h", "")
 assert scenario_client.detect_extension(b"# Blender\nv 1 2 3\n") == ".obj"
 assert scenario_client.detect_extension(b"glTF\x02\x00\x00\x00") == ".glb"
 # Tripo returns quad results as FBX; before, this fell through as ".bin"

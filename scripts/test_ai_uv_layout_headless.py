@@ -428,6 +428,18 @@ assert scenario_client.extract_job_id({"job": {"jobId": "j1"}}) == "j1"
 assert scenario_client.extract_job_id({"id": "j2"}) == "j2"
 assert scenario_client.extract_asset_ids({"job": {"metadata": {"assetIds": ["a", "b"]}}}) == ["a", "b"]
 assert scenario_client.extract_asset_ids({"job": {"result": {"assetId": "x"}}}) == ["x"]
+# A failed job carries its reason under metadata (hint first, error with the
+# support id second); the top level has no error field at all
+failed = {"job": {"status": "failure", "metadata": {
+    "error": "An internal error occurred. Please contact support and provide this id: error_X",
+    "hint": "Reduce the face_limit parameter to a value between 500 and 10000 for this model.",
+}}}
+reason, detail = scenario_client.job_failure_reason(failed)
+assert reason.startswith("Reduce the face_limit"), reason
+assert "error_X" in detail, detail
+assert scenario_client.job_failure_reason(
+    {"job": {"status": "failure", "metadata": {"error": "boom", "hint": None}}}) == ("boom", "")
+assert scenario_client.job_failure_reason({"job": {"status": "failure"}}) == ("", "")
 assert scenario_client.detect_extension(b"# Blender\nv 1 2 3\nvt 0.5 0.5\n") == ".obj"
 assert scenario_client.detect_extension(b"glTF\x02\x00\x00\x00") == ".glb"
 assert scenario_client.detect_extension(b"\x00\x01\x02\x03nonsense") == ".bin"

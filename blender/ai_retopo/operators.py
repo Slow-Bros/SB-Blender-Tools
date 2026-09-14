@@ -364,7 +364,7 @@ class SB_OT_ai_retopo(_RetopoModal, bpy.types.Operator):
 
         if models.uses_count(spec):
             wanted = settings.target_faces
-            actual = models.clamp_count(spec, wanted)
+            actual = models.clamp_count(spec, wanted, settings.polygon_type)
             density = f"target {actual} faces"
             if actual != wanted:
                 density += f" (clamped from {wanted} to the model range)"

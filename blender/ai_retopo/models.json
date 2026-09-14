@@ -8,7 +8,11 @@
     "models offering only low/medium/high. file_param, polygon_param and",
     "count_param/level_param are the names this model expects in the request",
     "body. polygon_values maps the panel's quads/tris choice onto whatever",
-    "the model calls it. extra is sent verbatim."
+    "the model calls it. extra is sent verbatim.",
+    "",
+    "count_range is [min, max], or {quads: [min, max], tris: [min, max]}",
+    "when the model accepts a different range per polygon type. Values",
+    "outside the range are clamped before the request is sent."
   ],
   "version": 1,
   "models": [
@@ -42,8 +46,7 @@
         "tris": "triangle"
       },
       "count_param": "targetPolycount",
-      "count_min": 100,
-      "count_max": 300000,
+      "count_range": [100, 300000],
       "extra": {
         "resizeHeight": 0,
         "originAt": "empty"
@@ -53,7 +56,7 @@
       "key": "tripo_retopology",
       "id": "model_tripo-retopology",
       "label": "Tripo Retopology",
-      "description": "Tripo Retopology. Target count from 1,000 to 20,000 faces",
+      "description": "Tripo Retopology. Target count from 500 to 20,000 faces, 10,000 for quads",
       "density": "count",
       "file_param": "model",
       "polygon_param": "quad",
@@ -62,8 +65,7 @@
         "tris": false
       },
       "count_param": "faceLimit",
-      "count_min": 1000,
-      "count_max": 20000,
+      "count_range": {"quads": [500, 10000], "tris": [500, 20000]},
       "extra": {
         "bake": false
       }

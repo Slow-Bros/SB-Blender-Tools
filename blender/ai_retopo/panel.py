@@ -79,9 +79,9 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
         col.label(text="Target Polygons")
         if models.uses_count(spec):
             col.prop(settings, "target_faces", text="")
-            limited = models.clamp_count(spec, settings.target_faces) != settings.target_faces
+            limited = models.clamp_count(spec, settings.target_faces, settings.polygon_type) != settings.target_faces
             col.label(
-                text=f"Model accepts {models.count_range_label(spec)}",
+                text=f"Model accepts {models.count_range_label(spec, settings.polygon_type)}",
                 icon="ERROR" if limited else "NONE",
             )
         else:

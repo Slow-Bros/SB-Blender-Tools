@@ -62,12 +62,19 @@ is controlled, which is why the panel changes with the selected model.
 | --- | --- | --- | --- | --- |
 | Hunyuan PolyGen 1.5 | `model_tencent-smarttopology` | `faceLevel`: low / medium / high only | `polygonType`: `quadrilateral` / `triangle` | OBJ |
 | Meshy Remesh | `model_meshy-remesh` | `targetPolycount`: 100 to 300000 | `topology`: `quad` / `triangle` | untested |
-| Tripo Retopology | `model_tripo-retopology` | `faceLimit`: 1000 to 20000 | `quad`: boolean | FBX |
+| Tripo Retopology | `model_tripo-retopology` | `faceLimit`: 500 to 20000 for triangles, 500 to 10000 for quads | `quad`: boolean | FBX |
 
 A target face count is approximate. It is what the model aims for, not a
 guarantee, so the result can land somewhat above or below. Values outside the
 model's range are clamped and the panel says so, rather than sending a value the
 API would reject.
+
+The range can depend on the topology, so the panel shows the range of the
+current model *and* polygon choice. Tripo is the case: 20,000 quads went through
+once and failed at Scenario after the upload, sixteen seconds in and billed,
+with the job's `metadata.hint` reading "Reduce the face_limit parameter to a
+value between 500 and 10000 for this model". That range is Tripo's own rule for
+its low-poly mode with quads, and it is what the registry now holds.
 
 Hunyuan PolyGen has no numeric control at all. Its three levels are the same
 options as the *Detail* dropdown in Phototron, and the resulting face count
@@ -124,7 +131,9 @@ uncorrected, and the panel says so.
 `blender/ai_retopo/models.json` holds the table above: endpoint id, parameter
 names, ranges and the values each model uses for quads and triangles. Adding a
 model, correcting a range or dropping one that is gone means editing that file
-and restarting Blender, not editing Python.
+and restarting Blender, not editing Python. A count model's `count_range` is
+either one `[min, max]` pair for both polygon types or an object with a pair
+per type, `{"quads": [500, 10000], "tris": [500, 20000]}`.
 
 There is deliberately no interface around this. An earlier version had buttons
 to refresh a catalogue from the API, check single model ids, export the list for
@@ -151,8 +160,18 @@ from the model key, not as the position in the list. Reordering or removing
 entries therefore never silently switches a saved scene to a different model.
 
 Whether a model actually works for an account is answered by running it. A
-failed job shows the API message verbatim in the panel and the console, which is
-the information that matters when something goes wrong.
+failed job shows the API's reason verbatim in the panel and the console, which
+is the information that matters when something goes wrong.
+
+That reason lives under `metadata` of the job object, not at its top level:
+`metadata.hint` says what to change ("Reduce the face_limit parameter to
+..."), `metadata.error` is usually the generic "An internal error occurred"
+plus a support id. The panel shows the hint and falls back to the error; the
+error goes to the console in any case. `statusHistory` carries only status and
+date, no reason. An earlier version looked for `error` and `message` at the
+top level, found neither, and reported the bare status, so a failed run said
+nothing but "Job failed: failure". If a job fails with neither field set, the
+console gets the job object itself, truncated, so the case can be diagnosed.
 
 ## Pipeline
 

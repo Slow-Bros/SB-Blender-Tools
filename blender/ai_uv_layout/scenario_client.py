@@ -202,10 +202,12 @@ class ScenarioClient:
             if status in ("success", "completed"):
                 return res
             if status in ("failed", "failure", "error", "canceled"):
-                history = job.get("statusHistory") or []
-                last = history[-1] if history and isinstance(history[-1], dict) else {}
-                reason = job.get("error") or job.get("message") or last.get("reason") or status
-                raise ScenarioError(f"Job failed: {reason}")
+                reason, detail = job_failure_reason(res)
+                if detail:
+                    self._log(f"Job {job_id} {status}: {detail}")
+                if not reason:
+                    self._log(f"Job {job_id} {status} without a reason: {json.dumps(job)[:600]}")
+                raise ScenarioError(f"Job failed: {reason or status}")
         raise ScenarioError(f"Timed out: job did not finish within {self.job_timeout / 60:.0f} minutes")
 
     def download_job_mesh(self, job_result):
@@ -244,6 +246,24 @@ class ScenarioClient:
 def extract_job_id(res):
     job = res.get("job") or {}
     return job.get("jobId") or job.get("id") or res.get("jobId") or res.get("id")
+
+
+def job_failure_reason(job_result):
+    """(Grund fuer den Nutzer, Detail fuers Log) eines gescheiterten Jobs.
+
+    Die Referenz legt beides unter metadata ab: `hint` sagt, was zu aendern
+    ist, `error` ist meist nur der generische Text mit einer Support-Id. Der
+    Hint ist deshalb die Meldung, der Error wandert ins Log. Fehlt der Hint,
+    wird der Error die Meldung. Beide leer: ('', '') und der Aufrufer loggt
+    das rohe Job-Objekt.
+    """
+    job = job_result.get("job") or job_result
+    meta = job.get("metadata") or {}
+    hint = str(meta.get("hint") or "").strip()
+    error = str(meta.get("error") or "").strip()
+    if hint:
+        return hint, error
+    return error, ""
 
 
 def extract_asset_ids(job_result):
