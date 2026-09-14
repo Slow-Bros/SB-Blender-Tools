@@ -81,12 +81,20 @@ class SBAIRetopoSettings(bpy.types.PropertyGroup):
     )
     pre_decimate: BoolProperty(
         name="Pre-Decimation",
-        description="Reduce very dense meshes before uploading (the API limit is 200 MB)",
+        description=(
+            "Reduce very dense meshes before uploading. The upload limit depends "
+            "on the model (Tripo 150 MB, Hunyuan 200 MB); the panel says when "
+            "the mesh is too large and which face count fits"
+        ),
         default=False,
     )
     pre_decimate_target: IntProperty(
         name="Upload Faces",
-        description="Target face count for the pre-decimation",
+        description=(
+            "Target face count for the pre-decimation. The panel recommends a "
+            "range: 5 to 10 % of the source works best for the AI models, "
+            "denser uploads mostly add scan noise"
+        ),
         default=200000,
         min=1000,
         soft_max=2000000,

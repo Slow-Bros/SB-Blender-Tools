@@ -27,6 +27,11 @@ TRIS = "tris"
 
 BUNDLED_FILE = os.path.join(os.path.dirname(__file__), "models.json")
 
+# Upload-Limit fuer Modelle, deren Doku keines nennt (Meshy). Das groesste
+# dokumentierte Limit: Hunyuan nimmt 200 MB, Tripo 150 MB. Die Pruefung vor
+# dem Upload passiert im Client, das Panel warnt schon vorher.
+DEFAULT_UPLOAD_LIMIT_MB = 200
+
 REQUIRED_KEYS = ("key", "id", "label", "density", "file_param",
                  "polygon_param", "polygon_values")
 
@@ -45,12 +50,37 @@ FALLBACK_MODELS = [
         "polygon_param": "polygonType",
         "polygon_values": {QUADS: "quadrilateral", TRIS: "triangle"},
         "level_param": "faceLevel",
+        "upload_limit_mb": DEFAULT_UPLOAD_LIMIT_MB,
         "extra": {},
     },
 ]
 
 MODELS = []
 LOAD_ERROR = ""
+
+
+def _parse_count_range(model_key, raw):
+    """Normalisiert count_range auf {QUADS: (min, max), TRIS: (min, max)}.
+
+    In der Datei steht entweder ein Paar [min, max] fuer beide Polygontypen
+    oder ein Objekt mit einem Paar je Typ. Tripo etwa nimmt fuer Quads nur
+    bis 10.000 Faces, fuer Dreiecke bis 20.000; ein Job mit 20.000 Quads
+    scheitert erst nach dem Upload und kostet trotzdem Credits.
+    """
+    if isinstance(raw, dict):
+        pairs = {pk: raw.get(pk) for pk in (QUADS, TRIS)}
+    else:
+        pairs = {pk: raw for pk in (QUADS, TRIS)}
+    result = {}
+    for pk, pair in pairs.items():
+        if (not isinstance(pair, (list, tuple)) or len(pair) != 2
+                or not all(isinstance(v, int) and not isinstance(v, bool) for v in pair)):
+            raise ValueError(f"'{model_key}' count_range for '{pk}' is not [min, max]")
+        lo, hi = pair
+        if lo > hi:
+            raise ValueError(f"'{model_key}' count_range for '{pk}' has min above max")
+        result[pk] = (lo, hi)
+    return result
 
 
 def _validate(entry):
@@ -66,13 +96,16 @@ def _validate(entry):
             raise ValueError(f"'{entry['key']}' has no polygon value for '{pk}'")
 
     if entry["density"] == DENSITY_COUNT:
-        for key in ("count_param", "count_min", "count_max"):
+        for key in ("count_param", "count_range"):
             if key not in entry:
                 raise ValueError(f"'{entry['key']}' is missing '{key}'")
-        if entry["count_min"] > entry["count_max"]:
-            raise ValueError(f"'{entry['key']}' has count_min above count_max")
+        entry["count_range"] = _parse_count_range(entry["key"], entry["count_range"])
     else:
         entry.setdefault("level_param", "faceLevel")
+
+    limit = entry.setdefault("upload_limit_mb", DEFAULT_UPLOAD_LIMIT_MB)
+    if isinstance(limit, bool) or not isinstance(limit, (int, float)) or limit <= 0:
+        raise ValueError(f"'{entry['key']}' upload_limit_mb is not a positive number")
 
     entry.setdefault("description", entry["label"])
     entry.setdefault("extra", {})
@@ -151,17 +184,34 @@ def uses_count(spec):
     return spec["density"] == DENSITY_COUNT
 
 
-def clamp_count(spec, value):
-    """Zielzahl in den vom Modell erlaubten Bereich zwingen."""
+def count_range(spec, polygon_key):
+    """(min, max) der Zielzahl fuer diesen Polygontyp, None bei Stufen-Modellen."""
     if not uses_count(spec):
+        return None
+    if polygon_key not in (QUADS, TRIS):
+        raise ValueError(f"unknown topology key: {polygon_key}")
+    return spec["count_range"][polygon_key]
+
+
+def clamp_count(spec, value, polygon_key):
+    """Zielzahl in den Bereich zwingen, den das Modell fuer diesen Polygontyp erlaubt."""
+    bounds = count_range(spec, polygon_key)
+    if bounds is None:
         return value
-    return max(spec["count_min"], min(spec["count_max"], int(value)))
+    lo, hi = bounds
+    return max(lo, min(hi, int(value)))
 
 
-def count_range_label(spec):
-    if not uses_count(spec):
+def count_range_label(spec, polygon_key):
+    bounds = count_range(spec, polygon_key)
+    if bounds is None:
         return ""
-    return f"{spec['count_min']:,} to {spec['count_max']:,}"
+    return f"{bounds[0]:,} to {bounds[1]:,}"
+
+
+def upload_limit_bytes(spec):
+    """Groesste Datei, die dieses Modell annimmt."""
+    return int(spec["upload_limit_mb"] * 1024 * 1024)
 
 
 def build_request(spec, asset_id, polygon_key, *, face_level=None, target_faces=None):
@@ -178,7 +228,7 @@ def build_request(spec, asset_id, polygon_key, *, face_level=None, target_faces=
     body[spec["polygon_param"]] = spec["polygon_values"][polygon_key]
 
     if uses_count(spec):
-        body[spec["count_param"]] = clamp_count(spec, target_faces)
+        body[spec["count_param"]] = clamp_count(spec, target_faces, polygon_key)
     else:
         body[spec["level_param"]] = face_level or "medium"
 

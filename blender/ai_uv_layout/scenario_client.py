@@ -22,7 +22,7 @@ import urllib.request
 
 API_BASE = "https://api.cloud.scenario.com"
 PART_SIZE = 5 * 1024 * 1024
-MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # Limit der Hunyuan-Modelle
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # Limit der Hunyuan-Modelle, upload_3d nimmt auch ein anderes
 REQUEST_TIMEOUT = 60
 
 MIME_TO_EXT = {
@@ -127,12 +127,17 @@ class ScenarioClient:
 
     # -- Upload ---------------------------------------------------------
 
-    def upload_3d(self, data, file_name, content_type, on_progress=None):
-        """Laedt eine 3D-Datei hoch und gibt die Asset-ID zurueck."""
-        if len(data) > MAX_UPLOAD_BYTES:
+    def upload_3d(self, data, file_name, content_type, on_progress=None,
+                  max_bytes=MAX_UPLOAD_BYTES):
+        """Laedt eine 3D-Datei hoch und gibt die Asset-ID zurueck.
+
+        max_bytes ist das Limit des Modells, das die Datei bekommt.
+        """
+        if len(data) > max_bytes:
             raise ScenarioError(
-                f"File too large ({len(data) / 1024 / 1024:.0f} MB, limit is 200 MB). "
-                "The UV model needs the mesh unchanged, so reduce it before unwrapping."
+                f"File too large ({len(data) / 1024 / 1024:.0f} MB, limit is "
+                f"{max_bytes / 1024 / 1024:.0f} MB). The UV model needs the mesh "
+                "unchanged, so reduce it before unwrapping."
             )
         parts_count = max(1, -(-len(data) // PART_SIZE))
         self._log(f"Upload {file_name}: {len(data) / 1024 / 1024:.1f} MB in {parts_count} part(s)")
@@ -202,10 +207,12 @@ class ScenarioClient:
             if status in ("success", "completed"):
                 return res
             if status in ("failed", "failure", "error", "canceled"):
-                history = job.get("statusHistory") or []
-                last = history[-1] if history and isinstance(history[-1], dict) else {}
-                reason = job.get("error") or job.get("message") or last.get("reason") or status
-                raise ScenarioError(f"Job failed: {reason}")
+                reason, detail = job_failure_reason(res)
+                if detail:
+                    self._log(f"Job {job_id} {status}: {detail}")
+                if not reason:
+                    self._log(f"Job {job_id} {status} without a reason: {json.dumps(job)[:600]}")
+                raise ScenarioError(f"Job failed: {reason or status}")
         raise ScenarioError(f"Timed out: job did not finish within {self.job_timeout / 60:.0f} minutes")
 
     def download_job_mesh(self, job_result):
@@ -244,6 +251,24 @@ class ScenarioClient:
 def extract_job_id(res):
     job = res.get("job") or {}
     return job.get("jobId") or job.get("id") or res.get("jobId") or res.get("id")
+
+
+def job_failure_reason(job_result):
+    """(Grund fuer den Nutzer, Detail fuers Log) eines gescheiterten Jobs.
+
+    Die Referenz legt beides unter metadata ab: `hint` sagt, was zu aendern
+    ist, `error` ist meist nur der generische Text mit einer Support-Id. Der
+    Hint ist deshalb die Meldung, der Error wandert ins Log. Fehlt der Hint,
+    wird der Error die Meldung. Beide leer: ('', '') und der Aufrufer loggt
+    das rohe Job-Objekt.
+    """
+    job = job_result.get("job") or job_result
+    meta = job.get("metadata") or {}
+    hint = str(meta.get("hint") or "").strip()
+    error = str(meta.get("error") or "").strip()
+    if hint:
+        return hint, error
+    return error, ""
 
 
 def extract_asset_ids(job_result):

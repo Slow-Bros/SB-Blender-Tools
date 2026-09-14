@@ -104,22 +104,46 @@ for spec in models.MODELS:
         for k, v in spec.get("extra", {}).items():
             assert body[k] == v, body
         if models.uses_count(spec):
+            lo, hi = models.count_range(spec, pk)
             got = body[spec["count_param"]]
-            assert spec["count_min"] <= got <= spec["count_max"], (spec["key"], got)
+            assert lo <= got <= hi, (spec["key"], pk, got)
             # a value outside the model's range must be clamped, never sent raw
             low = models.build_request(spec, "a", pk, target_faces=1)
             high = models.build_request(spec, "a", pk, target_faces=10 ** 9)
-            assert low[spec["count_param"]] == spec["count_min"], low
-            assert high[spec["count_param"]] == spec["count_max"], high
+            assert low[spec["count_param"]] == lo, low
+            assert high[spec["count_param"]] == hi, high
+            assert models.count_range_label(spec, pk) == f"{lo:,} to {hi:,}"
         else:
             assert body[spec["level_param"]] == "low", body
             assert "count_param" not in spec, spec
+            assert models.count_range(spec, pk) is None
+            assert models.count_range_label(spec, pk) == ""
+            assert models.clamp_count(spec, 7, pk) == 7
 try:
     models.build_request(models.MODELS[0], "a", "bogus")
     raise AssertionError("unknown polygon key must raise")
 except ValueError:
     pass
 assert models.get("does-not-exist")["key"] == first_key
+# Tripo takes at most 10,000 faces for quads but 20,000 for triangles; a job
+# with 20,000 quads went through once and failed at Scenario after the upload
+tripo = models.get("tripo_retopology")
+assert tripo["id"] == "model_tripo-retopology", tripo
+assert models.count_range(tripo, models.QUADS) == (500, 10000), tripo["count_range"]
+assert models.count_range(tripo, models.TRIS) == (500, 20000), tripo["count_range"]
+assert models.build_request(tripo, "a", models.QUADS, target_faces=20000)["faceLimit"] == 10000
+assert models.build_request(tripo, "a", models.TRIS, target_faces=20000)["faceLimit"] == 20000
+try:
+    models.count_range(tripo, "bogus")
+    raise AssertionError("unknown polygon key must raise")
+except ValueError:
+    pass
+# Upload limits are per model, straight from each model's documentation:
+# Tripo takes 150 MB, Hunyuan 200 MB. Meshy documents none and gets the default.
+assert models.upload_limit_bytes(tripo) == 150 * 1024 * 1024
+assert models.upload_limit_bytes(models.get("hunyuan_polygen")) == 200 * 1024 * 1024
+assert models.get("meshy_remesh")["upload_limit_mb"] == models.DEFAULT_UPLOAD_LIMIT_MB
+assert all(models.upload_limit_bytes(m) > 0 for m in models.FALLBACK_MODELS)
 assert not models.LOAD_ERROR, models.LOAD_ERROR
 model_ids = [m["id"] for m in models.MODELS]
 assert "model_meshy-remesh" in model_ids, "Meshy is back in the registry"
@@ -134,14 +158,27 @@ with open(good, "w", encoding="utf-8") as f:
         "key": "custom", "id": "model_custom-x", "label": "Custom",
         "density": "count", "file_param": "model", "polygon_param": "topology",
         "polygon_values": {"quads": "quad", "tris": "triangle"},
-        "count_param": "n", "count_min": 10, "count_max": 20,
+        "count_param": "n", "count_range": [10, 20],
     }]}, f)
 loaded = models._read(good)
 assert loaded[0]["extra"] == {}, loaded                  # optional keys defaulted
 assert loaded[0]["description"] == "Custom", loaded
+assert loaded[0]["upload_limit_mb"] == models.DEFAULT_UPLOAD_LIMIT_MB, loaded
+assert models._validate({**loaded[0], "upload_limit_mb": 50})["upload_limit_mb"] == 50
+# a plain pair applies to both polygon types
+assert loaded[0]["count_range"] == {"quads": (10, 20), "tris": (10, 20)}, loaded
+split = models._validate({**loaded[0], "count_range": {"quads": [1, 2], "tris": [3, 4]}})
+assert split["count_range"] == {"quads": (1, 2), "tris": (3, 4)}, split
 for broken in ({"models": []},
                {"models": [{"key": "a"}]},
-               {"models": [{**loaded[0], "count_min": 99, "count_max": 1}]},
+               {"models": [{**loaded[0], "count_range": [99, 1]}]},
+               {"models": [{**loaded[0], "count_range": [10]}]},
+               {"models": [{**loaded[0], "count_range": [10, "20"]}]},
+               {"models": [{**loaded[0], "count_range": {"quads": [1, 2]}}]},
+               {"models": [{**loaded[0], "count_range": {"quads": [1, 2], "tris": [4, 3]}}]},
+               {"models": [{**loaded[0], "upload_limit_mb": 0}]},
+               {"models": [{**loaded[0], "upload_limit_mb": "150"}]},
+               {"models": [{**loaded[0], "upload_limit_mb": True}]},
                {"models": [loaded[0], loaded[0]]}):
     bad = os.path.join(reg_tmp, "bad.json")
     with open(bad, "w", encoding="utf-8") as f:
@@ -177,10 +214,118 @@ assert "Scan_sb_upload" not in bpy.data.objects, "temp object not cleaned up"
 assert src.select_get() and ctx.view_layer.objects.active == src, "selection not restored"
 print(f"[TEST] export ok: {info}")
 
+# The panel's size warning rests on an estimate from the mesh counters alone;
+# it has to match what the exporter actually writes, or the warning lies.
+eval_mesh = src.evaluated_get(ctx.evaluated_depsgraph_get()).data
+counts = (len(eval_mesh.vertices), len(eval_mesh.loops), len(eval_mesh.polygons))
+est = mesh_io.estimate_upload_bytes(*counts)
+real = os.path.getsize(glb)
+assert abs(est - real) / real < 0.02, (est, real, counts)
+# a mesh that fits keeps its face count, one that does not gets a smaller
+# target with some headroom, rounded to the thousands the field counts in
+assert mesh_io.faces_within_upload_limit(*counts, real * 2) == counts[2]
+fit = mesh_io.faces_within_upload_limit(*counts, real // 2)
+assert 1000 <= fit < counts[2] and fit % 1000 == 0, (fit, counts)
+assert mesh_io.estimate_upload_bytes(*counts, decimate_target=fit) <= real // 2, (fit, counts)
+# Tripo's 150 MB is roughly 8 million triangles of a closed mesh; a bigger
+# mesh must get a target below that limit, not above the mesh itself
+big = (5_000_000, 30_000_000, 10_000_000)
+assert mesh_io.estimate_upload_bytes(*big) > 150 * 1024 * 1024
+big_fit = mesh_io.faces_within_upload_limit(*big, 150 * 1024 * 1024)
+assert 1000 <= big_fit < 10_000_000 and big_fit % 1000 == 0, big_fit
+assert mesh_io.estimate_upload_bytes(*big, decimate_target=big_fit) <= 150 * 1024 * 1024
+assert mesh_io.estimate_upload_bytes(*big, decimate_target=12_000_000) == mesh_io.estimate_upload_bytes(*big)
+print(f"[TEST] upload size estimate ok: {est} vs {real} bytes, fit {fit} of {counts[2]}")
+
+# The panel warns under the face count only when the mesh is over the limit of
+# the selected model, and names the face count that fits
+class _Box:
+    def __init__(self):
+        self.lines = []
+
+    def label(self, text="", icon="NONE"):
+        self.lines.append((text, icon))
+
+settings = scene.sb_ai_retopo
+settings.pre_decimate = False
+box = _Box()
+panel._draw_upload_size(box, eval_mesh, tripo, settings)
+assert box.lines == [], box.lines
+tiny = {**tripo, "upload_limit_mb": real / 2 / 1024 / 1024}
+panel._draw_upload_size(box, eval_mesh, tiny, settings)
+assert len(box.lines) == 2 and box.lines[0][1] == "ERROR", box.lines
+assert "limit is 0 MB" in box.lines[0][0], box.lines
+assert f"Reduce to at least {fit:,} faces" in box.lines[1][0], box.lines
+# a pre-decimation target that fits silences the warning, one that does not keeps it
+settings.pre_decimate = True
+settings.pre_decimate_target = fit
+box = _Box()
+panel._draw_upload_size(box, eval_mesh, tiny, settings)
+assert box.lines == [], box.lines
+settings.pre_decimate_target = counts[2] + 1000
+panel._draw_upload_size(box, eval_mesh, tiny, settings)
+assert len(box.lines) == 2, box.lines
+settings.pre_decimate = False
+print("[TEST] panel upload warning ok")
+
+# Recommended upload size: 5 to 10 % of the source, never below the floor,
+# capped by what fits the limit, nothing for a mesh that is small already
+rec = mesh_io.recommended_upload_faces
+assert rec(10_000_000) == (500_000, 1_000_000), rec(10_000_000)
+assert rec(1_500_000) == (100_000, 150_000), rec(1_500_000)      # floor lifts the low end
+assert rec(900_000) == (100_000, 100_000), rec(900_000)          # floor lifts both
+assert rec(100_000) is None and rec(7_872) is None
+assert rec(10_000_000, max_faces=750_000) == (500_000, 750_000)  # capped by the limit
+assert rec(10_000_000, max_faces=300_000) is None                 # limit already forces less
+assert rec(10_000_000, max_faces=500_000) is None
+assert rec(7_872, max_faces=3_000) is None
+assert rec(10_000_000, max_faces=20_000_000) == (500_000, 1_000_000)
+assert rec(123_456_789)[0] % 1000 == 0 and rec(123_456_789)[1] % 1000 == 0
+
+# In the panel the recommendation sits under the limit warning; the small test
+# mesh gets none, a scan-sized mesh gets the range, and a pre-decimation
+# target inside the range turns the info icon into a check mark
+class _Counts:
+    def __init__(self, v, l, f):
+        self.vertices, self.loops, self.polygons = range(v), range(l), range(f)
+
+scan = _Counts(*big)                       # 10 million faces, over Tripo's 150 MB
+box = _Box()
+panel._draw_upload_size(box, scan, tripo, settings)
+assert len(box.lines) == 4 and box.lines[0][1] == "ERROR", box.lines
+assert box.lines[2] == ("Recommended upload: 500,000 to 1,000,000 faces", "INFO"), box.lines
+assert box.lines[3][0].startswith("5 to 10 % of the source"), box.lines
+# a limit inside the range caps its upper end to what fits
+cramped = {**tripo, "upload_limit_mb": 15}
+cramped_fit = mesh_io.faces_within_upload_limit(*big, 15 * 1024 * 1024)
+assert 500_000 < cramped_fit < 1_000_000, cramped_fit
+box = _Box()
+panel._draw_upload_size(box, scan, cramped, settings)
+assert box.lines[2][0] == f"Recommended upload: 500,000 to {cramped_fit:,} faces", box.lines
+settings.pre_decimate = True
+settings.pre_decimate_target = 600_000
+box = _Box()
+panel._draw_upload_size(box, scan, tripo, settings)
+assert box.lines[0][1] == "CHECKMARK" and box.lines[0][0].startswith("Recommended"), box.lines
+settings.pre_decimate_target = 200_000
+box = _Box()
+panel._draw_upload_size(box, scan, tripo, settings)
+assert box.lines[0][1] == "INFO", box.lines
+settings.pre_decimate = False
+mid = _Counts(450_000, 2_700_000, 900_000)  # fits the limit, floor makes one number
+box = _Box()
+panel._draw_upload_size(box, mid, tripo, settings)
+assert box.lines[0] == ("Recommended upload: about 100,000 faces", "INFO"), box.lines
+assert box.lines[1][0].startswith("11 % of the source"), box.lines
+print("[TEST] upload recommendation ok")
+
 # Pre-decimate export
 glb2 = os.path.join(tmp, "upload_dec.glb")
 info2 = mesh_io.export_object_for_upload(ctx, src, glb2, decimate_target=500)
 assert os.path.getsize(glb2) < os.path.getsize(glb), "pre-decimate did not shrink file"
+# the estimate scales with the decimation ratio, like the exporter does
+est2 = mesh_io.estimate_upload_bytes(*counts, decimate_target=500)
+assert abs(est2 - os.path.getsize(glb2)) / os.path.getsize(glb2) < 0.1, (est2, os.path.getsize(glb2))
 print(f"[TEST] pre-decimate export ok: {info2}")
 
 # --- cleanup before upload (duplicate + loose vertices), as Phototron does
@@ -493,10 +638,32 @@ bpy.data.objects.remove(kept_obj, do_unlink=True)
 bpy.data.objects.remove(plain, do_unlink=True)
 
 # Pure-python API parsers
+# the client refuses a file over the model's limit before any request goes out
+_client = scenario_client.ScenarioClient("k", "s")
+try:
+    _client.upload_3d(b"x" * 2 * 1024 * 1024, "big.glb", "model/gltf-binary", max_bytes=1024 * 1024)
+    raise AssertionError("oversized upload accepted")
+except scenario_client.ScenarioError as e:
+    assert "limit is 1 MB" in str(e), e
 assert scenario_client.extract_job_id({"job": {"jobId": "j1"}}) == "j1"
 assert scenario_client.extract_job_id({"id": "j2"}) == "j2"
 assert scenario_client.extract_asset_ids({"job": {"metadata": {"assetIds": ["a", "b"]}}}) == ["a", "b"]
 assert scenario_client.extract_asset_ids({"job": {"result": {"assetId": "x"}}}) == ["x"]
+# A failed job carries its reason under metadata: the hint says what to change,
+# the error is generic plus a support id. Before, neither was read and the
+# console only said "Job failed: failure".
+failed = {"job": {"status": "failure", "metadata": {
+    "error": "An internal error occurred. Please contact support and provide this id: error_X",
+    "hint": "Reduce the face_limit parameter to a value between 500 and 10000 for this model.",
+}}}
+reason, detail = scenario_client.job_failure_reason(failed)
+assert reason.startswith("Reduce the face_limit"), reason
+assert "error_X" in detail, detail
+reason, detail = scenario_client.job_failure_reason(
+    {"job": {"status": "failure", "metadata": {"error": "boom", "hint": None}}})
+assert (reason, detail) == ("boom", ""), (reason, detail)
+assert scenario_client.job_failure_reason({"job": {"status": "failure"}}) == ("", "")
+assert scenario_client.job_failure_reason({"status": "failure", "metadata": {"hint": " h "}}) == ("h", "")
 assert scenario_client.detect_extension(b"# Blender\nv 1 2 3\n") == ".obj"
 assert scenario_client.detect_extension(b"glTF\x02\x00\x00\x00") == ".glb"
 # Tripo returns quad results as FBX; before, this fell through as ".bin"

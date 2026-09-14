@@ -58,6 +58,7 @@ def _worker(job, api_key, api_secret, glb_path, model_spec, polygon_key, face_le
             data, os.path.basename(glb_path), "model/gltf-binary",
             on_progress=lambda p: emit("progress", value=0.08 + p * 0.10,
                                        message=f"Uploading ... {int(p * 100)}%"),
+            max_bytes=models.upload_limit_bytes(model_spec),
         )
         log(f"Asset: {asset_id}")
 
@@ -364,7 +365,7 @@ class SB_OT_ai_retopo(_RetopoModal, bpy.types.Operator):
 
         if models.uses_count(spec):
             wanted = settings.target_faces
-            actual = models.clamp_count(spec, wanted)
+            actual = models.clamp_count(spec, wanted, settings.polygon_type)
             density = f"target {actual} faces"
             if actual != wanted:
                 density += f" (clamped from {wanted} to the model range)"

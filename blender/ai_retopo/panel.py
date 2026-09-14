@@ -5,7 +5,7 @@ import textwrap
 
 import bpy
 
-from . import history, models, preferences
+from . import history, mesh_io, models, preferences
 from .operators import is_running
 
 STATUS_ICONS = {
@@ -29,6 +29,48 @@ def _pretty_size(size_mb):
     if size_mb > 0.0:
         return f"{size_mb * 1024:.0f} KB"
     return "size unknown"
+
+
+def _draw_upload_size(box, mesh, spec, settings):
+    """Upload-Limit und Empfehlung unter der Face-Zahl.
+
+    Erst die Pflicht: sprengt der Upload das Limit des Modells, steht das hier
+    mit der Face-Zahl, auf die die Pre-Decimation mindestens gehen muss.
+    Geschaetzt aus den Zaehlern des Meshes, wie es exportiert wuerde: mit
+    Pre-Decimation zaehlt deren Ziel.
+
+    Dann die Kuer: der Bereich, der den Modellen erfahrungsgemaess am besten
+    bekommt (mesh_io.recommended_upload_faces), nach oben auf das Limit
+    gekappt. Ein Haken statt des Info-Symbols, wenn die Pre-Decimation schon
+    darin liegt.
+    """
+    counts = (len(mesh.vertices), len(mesh.loops), len(mesh.polygons))
+    limit = models.upload_limit_bytes(spec)
+    decimate = settings.pre_decimate_target if settings.pre_decimate else 0
+    size = mesh_io.estimate_upload_bytes(*counts, decimate_target=decimate)
+    fit = mesh_io.faces_within_upload_limit(*counts, limit)
+    if size > limit:
+        # Kurz genug fuer die Sidebar-Breite; welches Modell das Limit setzt,
+        # steht direkt darunter in der Modellwahl
+        box.label(text=f"Upload about {size / 1024 / 1024:.0f} MB, limit is {limit / 1024 / 1024:.0f} MB",
+                  icon="ERROR")
+        box.label(text=f"Reduce to at least {fit:,} faces (Pre-Decimation)", icon="BLANK1")
+
+    advice = mesh_io.recommended_upload_faces(counts[2], max_faces=fit)
+    if advice is None:
+        return
+    low, high = advice
+    within = settings.pre_decimate and low <= settings.pre_decimate_target <= high
+    # Prozent aus den Zahlen selbst, denn Boden und Limit verschieben sie
+    lo_pct, hi_pct = round(low / counts[2] * 100), round(high / counts[2] * 100)
+    if low == high:
+        text = f"Recommended upload: about {high:,} faces"
+        share = f"{hi_pct} % of the source, via Pre-Decimation"
+    else:
+        text = f"Recommended upload: {low:,} to {high:,} faces"
+        share = f"{lo_pct} to {hi_pct} % of the source, via Pre-Decimation"
+    box.label(text=text, icon="CHECKMARK" if within else "INFO")
+    box.label(text=share, icon="BLANK1")
 
 
 class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
@@ -57,11 +99,14 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
             box.label(text="Scenario API key is missing", icon="ERROR")
             box.operator("preferences.addon_show", text="Add-on Preferences").module = __package__
 
+        spec = models.get(settings.model)
+
         # -- Object -------------------------------------------------------
         box = layout.box()
         if obj is not None and obj.type == "MESH":
             box.label(text=obj.name, icon="MESH_DATA")
             box.label(text=f"{len(obj.data.polygons):,} faces")
+            _draw_upload_size(box, obj.data, spec, settings)
         else:
             box.label(text="No mesh selected", icon="INFO")
         if context.mode != "OBJECT":
@@ -73,15 +118,13 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
         col.label(text="AI Model")
         col.prop(settings, "model", text="")
 
-        spec = models.get(settings.model)
-
         col.separator()
         col.label(text="Target Polygons")
         if models.uses_count(spec):
             col.prop(settings, "target_faces", text="")
-            limited = models.clamp_count(spec, settings.target_faces) != settings.target_faces
+            limited = models.clamp_count(spec, settings.target_faces, settings.polygon_type) != settings.target_faces
             col.label(
-                text=f"Model accepts {models.count_range_label(spec)}",
+                text=f"Model accepts {models.count_range_label(spec, settings.polygon_type)}",
                 icon="ERROR" if limited else "NONE",
             )
         else:

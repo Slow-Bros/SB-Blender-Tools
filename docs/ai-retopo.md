@@ -44,7 +44,7 @@ below this panel and takes the retopo result on to the next step.
 | Remove Stray Fragments | Delete separate parts the model placed outside the object. On by default. See *Stray fragments* below. |
 | Hide Original | Hide (not delete) the source object after a successful import. |
 | History | Past jobs of this project, with *Import Again* for a result that was never imported. See *History* below. |
-| Pre-Decimation | Decimate the upload copy before sending (API limit 200 MB). The original is untouched. |
+| Pre-Decimation | Decimate the upload copy before sending. The original is untouched. The upload limit depends on the model, and the panel recommends a range; see *Upload limit and recommended size* below. |
 
 Requirements: Object Mode, active object is a mesh. One job at a time; the
 panel shows a progress bar and a cancel button while running. Progress and
@@ -58,22 +58,78 @@ with the same parent and world matrix, smooth shaded, selected and active.
 Three Scenario models are in the registry. They differ in how the polygon density
 is controlled, which is why the panel changes with the selected model.
 
-| Model | Model id | Density control | Topology | Result format |
-| --- | --- | --- | --- | --- |
-| Hunyuan PolyGen 1.5 | `model_tencent-smarttopology` | `faceLevel`: low / medium / high only | `polygonType`: `quadrilateral` / `triangle` | OBJ |
-| Meshy Remesh | `model_meshy-remesh` | `targetPolycount`: 100 to 300000 | `topology`: `quad` / `triangle` | untested |
-| Tripo Retopology | `model_tripo-retopology` | `faceLimit`: 1000 to 20000 | `quad`: boolean | FBX |
+| Model | Model id | Density control | Topology | Upload limit | Result format |
+| --- | --- | --- | --- | --- | --- |
+| Hunyuan PolyGen 1.5 | `model_tencent-smarttopology` | `faceLevel`: low / medium / high only | `polygonType`: `quadrilateral` / `triangle` | 200 MB | OBJ |
+| Meshy Remesh | `model_meshy-remesh` | `targetPolycount`: 100 to 300000 | `topology`: `quad` / `triangle` | none documented, 200 MB assumed | untested |
+| Tripo Retopology | `model_tripo-retopology` | `faceLimit`: 500 to 20000 for triangles, 500 to 10000 for quads | `quad`: boolean | 150 MB | FBX |
 
 A target face count is approximate. It is what the model aims for, not a
 guarantee, so the result can land somewhat above or below. Values outside the
 model's range are clamped and the panel says so, rather than sending a value the
 API would reject.
 
+The range can depend on the topology, so the panel shows the range of the
+current model *and* polygon choice. Tripo is the case: 20,000 quads went through
+once and failed at Scenario after the upload, sixteen seconds in and billed,
+with the job's `metadata.hint` reading "Reduce the face_limit parameter to a
+value between 500 and 10000 for this model". That range is Tripo's own rule for
+its low-poly mode with quads, and it is what the registry now holds.
+
 Hunyuan PolyGen has no numeric control at all. Its three levels are the same
 options as the *Detail* dropdown in Phototron, and the resulting face count
 depends on the level and on the input mesh. Pick Tripo when a specific number
 matters. Tripo is called with `bake: false` because the upload carries no
 textures, so baking would have nothing to project.
+
+### Upload limit and recommended size
+
+Each model states its own maximum for the uploaded file: Tripo takes 150 MB,
+Hunyuan 200 MB, Meshy documents none and gets the 200 MB default. The limits
+are in the registry as `upload_limit_mb`, and the client refuses a larger
+file before any request goes out. Tripo documents no limit on the input face
+count, only on the file size.
+
+The panel says beforehand whether the mesh fits. Under the face count of the
+active object it shows the estimated upload size when that exceeds the limit
+of the selected model, and the face count the pre-decimation has to go to
+so it fits, with ten percent headroom. The estimate comes from the counters
+of the mesh as it is, before modifiers, like the face count above it, so it
+costs nothing per redraw: the exporter writes twelve
+bytes per vertex and three indices per triangle, and without normals and UVs
+it splits no vertices. Measured against real exports the estimate is within
+one percent, and it scales with the decimation ratio the way the exporter
+does. With pre-decimation switched on the estimate uses its target, so the
+warning disappears once the target is low enough. What the estimate cannot
+know is the cleanup: a mesh full of duplicate vertices exports smaller than
+estimated, and the check in the client measures the real file.
+
+Below the limit, which is a must, the panel gives a recommendation, which is
+not: "Recommended upload: 500,000 to 1,000,000 faces" for a ten-million-face
+scan, that is 5 to 10 % of the source. The check mark appears once the
+pre-decimation target lies inside the range. The range never goes below
+100,000 faces, so a mesh of a few hundred thousand faces gets a single number
+and a mesh under that gets nothing, and it is capped at the count that fits the
+upload limit. When the limit already forces a count below the range, the
+recommendation is dropped, the limit line says all there is.
+
+The 5 to 10 % come from Tripo's guide to retopologising photogrammetry
+meshes, and Tripo's API reference says of the low-poly mode behind its
+retopology model that "inputs with less complexity work best". Our own data
+point agrees: a ten-million-face scan retopologised by Tripo came back better
+from a 200,000-face upload than from a two-million-face one. The likely
+reason is how these models read the input. They sample the surface as a point
+cloud of fixed size, a few thousand points in the published models of this
+kind, so beyond a certain density more triangles add no shape, only the
+scan's high-frequency noise, and the published ablations show that noise on
+point positions and normals degrades the result. Decimating first acts as a
+low-pass filter. Hunyuan PolyGen works the same way but has published
+nothing on input density, and Meshy Remesh is a classic remesher whose
+recommendation is simply to stay under about 300,000 polygons. The range is
+therefore a rule of thumb from one model's guidance, applied to all three
+because it is at worst harmless for the other two. The fraction and the
+floor are constants in `mesh_io.py` (`UPLOAD_RECOMMENDED_FRACTION`,
+`UPLOAD_RECOMMENDED_FLOOR`).
 
 Tripo returns its result as FBX rather than OBJ or GLB. The download recognises
 that from the file's magic bytes even when the MIME type is uninformative, and
@@ -124,7 +180,10 @@ uncorrected, and the panel says so.
 `blender/ai_retopo/models.json` holds the table above: endpoint id, parameter
 names, ranges and the values each model uses for quads and triangles. Adding a
 model, correcting a range or dropping one that is gone means editing that file
-and restarting Blender, not editing Python.
+and restarting Blender, not editing Python. A count model's `count_range` is
+either one `[min, max]` pair for both polygon types or an object with a pair
+per type, `{"quads": [500, 10000], "tris": [500, 20000]}`. `upload_limit_mb`
+is optional and defaults to 200.
 
 There is deliberately no interface around this. An earlier version had buttons
 to refresh a catalogue from the API, check single model ids, export the list for
@@ -151,8 +210,18 @@ from the model key, not as the position in the list. Reordering or removing
 entries therefore never silently switches a saved scene to a different model.
 
 Whether a model actually works for an account is answered by running it. A
-failed job shows the API message verbatim in the panel and the console, which is
-the information that matters when something goes wrong.
+failed job shows the API's reason verbatim in the panel and the console, which
+is the information that matters when something goes wrong.
+
+That reason lives under `metadata` of the job object, not at its top level:
+`metadata.hint` says what to change ("Reduce the face_limit parameter to
+..."), `metadata.error` is usually the generic "An internal error occurred"
+plus a support id. The panel shows the hint and falls back to the error; the
+error goes to the console in any case. `statusHistory` carries only status and
+date, no reason. An earlier version looked for `error` and `message` at the
+top level, found neither, and reported the bare status, so a failed run said
+nothing but "Job failed: failure". If a job fails with neither field set, the
+console gets the job object itself, truncated, so the case can be diagnosed.
 
 ## Pipeline
 
@@ -252,7 +321,8 @@ needs manual cleanup.
 ```
 
 The test needs no network access. It covers registration, export with the
-pre-upload cleanup, pre-decimation, the fit tolerances, a simulated result round
+pre-upload cleanup, pre-decimation, the upload size estimate against a real
+export, the fit tolerances, a simulated result round
 trip with a placement check, a result carrying a stray fragment, and the API
 response parsers. The live API path is exercised manually in Blender with real
 credentials.
