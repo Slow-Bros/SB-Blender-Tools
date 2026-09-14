@@ -70,6 +70,39 @@ def estimate_upload_bytes(vertex_count, loop_count, face_count, decimate_target=
     return GLB_HEADER_BYTES + int(payload)
 
 
+# Empfehlung fuer die Pre-Decimation: 5 bis 10 Prozent der Ausgangs-Faces,
+# nie unter dem Boden. Tripos Leitfaden zu Photogrammetrie-Meshes nennt die
+# 5 bis 10 Prozent, und Tripos API-Doku sagt fuer den Retopologie-Modus
+# "inputs with less complexity work best". Ein 10-Millionen-Scan kam bei
+# 200.000 besser zurueck als bei 2 Millionen. Die Modelle tasten die Flaeche
+# als Punktwolke ab; mehr Dreiecke bringen ab da nur Scan-Rauschen mit. Der
+# Boden verhindert, dass ein mittelgrosses Mesh auf eine Zahl gedrueckt wird,
+# die die Form nicht mehr traegt.
+UPLOAD_RECOMMENDED_FRACTION = (0.05, 0.10)
+UPLOAD_RECOMMENDED_FLOOR = 100000
+
+
+def recommended_upload_faces(face_count, max_faces=None):
+    """(low, high) Faces, auf die die Pre-Decimation gehen sollte, oder None.
+
+    None, wenn das Mesh schon klein genug ist. max_faces kappt den Bereich
+    nach oben, etwa auf die Zahl, die noch unter das Upload-Limit passt;
+    liegt die Kappung unter dem Bereich, gibt es nichts zu empfehlen, das
+    Limit sagt dann schon alles. Beide Werte auf Tausender gerundet wie das
+    Feld im Panel; low und high fallen zusammen, wenn der Boden greift.
+    """
+    lo_frac, hi_frac = UPLOAD_RECOMMENDED_FRACTION
+    low = max(UPLOAD_RECOMMENDED_FLOOR, int(face_count * lo_frac // 1000) * 1000)
+    high = max(UPLOAD_RECOMMENDED_FLOOR, int(face_count * hi_frac // 1000) * 1000)
+    if max_faces is not None:
+        if max_faces <= low:
+            return None
+        high = min(high, max_faces)
+    if face_count <= high:
+        return None
+    return low, high
+
+
 def faces_within_upload_limit(vertex_count, loop_count, face_count, limit_bytes, margin=0.9):
     """Zielzahl fuer die Pre-Decimation, mit der der Upload unter dem Limit bleibt.
 

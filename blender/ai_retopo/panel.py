@@ -32,24 +32,45 @@ def _pretty_size(size_mb):
 
 
 def _draw_upload_size(box, mesh, spec, settings):
-    """Warnt unter der Face-Zahl, wenn der Upload das Limit des Modells sprengt.
+    """Upload-Limit und Empfehlung unter der Face-Zahl.
 
+    Erst die Pflicht: sprengt der Upload das Limit des Modells, steht das hier
+    mit der Face-Zahl, auf die die Pre-Decimation mindestens gehen muss.
     Geschaetzt aus den Zaehlern des Meshes, wie es exportiert wuerde: mit
-    Pre-Decimation zaehlt deren Ziel. Die zweite Zeile nennt die Face-Zahl,
-    auf die die Pre-Decimation gehen muss, damit es passt.
+    Pre-Decimation zaehlt deren Ziel.
+
+    Dann die Kuer: der Bereich, der den Modellen erfahrungsgemaess am besten
+    bekommt (mesh_io.recommended_upload_faces), nach oben auf das Limit
+    gekappt. Ein Haken statt des Info-Symbols, wenn die Pre-Decimation schon
+    darin liegt.
     """
     counts = (len(mesh.vertices), len(mesh.loops), len(mesh.polygons))
     limit = models.upload_limit_bytes(spec)
     decimate = settings.pre_decimate_target if settings.pre_decimate else 0
     size = mesh_io.estimate_upload_bytes(*counts, decimate_target=decimate)
-    if size <= limit:
-        return
     fit = mesh_io.faces_within_upload_limit(*counts, limit)
-    # Kurz genug fuer die Sidebar-Breite; welches Modell das Limit setzt,
-    # steht direkt darunter in der Modellwahl
-    box.label(text=f"Upload about {size / 1024 / 1024:.0f} MB, limit is {limit / 1024 / 1024:.0f} MB",
-              icon="ERROR")
-    box.label(text=f"Reduce to {fit:,} faces (Pre-Decimation)", icon="BLANK1")
+    if size > limit:
+        # Kurz genug fuer die Sidebar-Breite; welches Modell das Limit setzt,
+        # steht direkt darunter in der Modellwahl
+        box.label(text=f"Upload about {size / 1024 / 1024:.0f} MB, limit is {limit / 1024 / 1024:.0f} MB",
+                  icon="ERROR")
+        box.label(text=f"Reduce to at least {fit:,} faces (Pre-Decimation)", icon="BLANK1")
+
+    advice = mesh_io.recommended_upload_faces(counts[2], max_faces=fit)
+    if advice is None:
+        return
+    low, high = advice
+    within = settings.pre_decimate and low <= settings.pre_decimate_target <= high
+    # Prozent aus den Zahlen selbst, denn Boden und Limit verschieben sie
+    lo_pct, hi_pct = round(low / counts[2] * 100), round(high / counts[2] * 100)
+    if low == high:
+        text = f"Recommended upload: about {high:,} faces"
+        share = f"{hi_pct} % of the source, via Pre-Decimation"
+    else:
+        text = f"Recommended upload: {low:,} to {high:,} faces"
+        share = f"{lo_pct} to {hi_pct} % of the source, via Pre-Decimation"
+    box.label(text=text, icon="CHECKMARK" if within else "INFO")
+    box.label(text=share, icon="BLANK1")
 
 
 class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):

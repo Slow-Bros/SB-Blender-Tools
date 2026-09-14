@@ -255,7 +255,7 @@ tiny = {**tripo, "upload_limit_mb": real / 2 / 1024 / 1024}
 panel._draw_upload_size(box, eval_mesh, tiny, settings)
 assert len(box.lines) == 2 and box.lines[0][1] == "ERROR", box.lines
 assert "limit is 0 MB" in box.lines[0][0], box.lines
-assert f"Reduce to {fit:,} faces" in box.lines[1][0], box.lines
+assert f"Reduce to at least {fit:,} faces" in box.lines[1][0], box.lines
 # a pre-decimation target that fits silences the warning, one that does not keeps it
 settings.pre_decimate = True
 settings.pre_decimate_target = fit
@@ -267,6 +267,57 @@ panel._draw_upload_size(box, eval_mesh, tiny, settings)
 assert len(box.lines) == 2, box.lines
 settings.pre_decimate = False
 print("[TEST] panel upload warning ok")
+
+# Recommended upload size: 5 to 10 % of the source, never below the floor,
+# capped by what fits the limit, nothing for a mesh that is small already
+rec = mesh_io.recommended_upload_faces
+assert rec(10_000_000) == (500_000, 1_000_000), rec(10_000_000)
+assert rec(1_500_000) == (100_000, 150_000), rec(1_500_000)      # floor lifts the low end
+assert rec(900_000) == (100_000, 100_000), rec(900_000)          # floor lifts both
+assert rec(100_000) is None and rec(7_872) is None
+assert rec(10_000_000, max_faces=750_000) == (500_000, 750_000)  # capped by the limit
+assert rec(10_000_000, max_faces=300_000) is None                 # limit already forces less
+assert rec(10_000_000, max_faces=500_000) is None
+assert rec(7_872, max_faces=3_000) is None
+assert rec(10_000_000, max_faces=20_000_000) == (500_000, 1_000_000)
+assert rec(123_456_789)[0] % 1000 == 0 and rec(123_456_789)[1] % 1000 == 0
+
+# In the panel the recommendation sits under the limit warning; the small test
+# mesh gets none, a scan-sized mesh gets the range, and a pre-decimation
+# target inside the range turns the info icon into a check mark
+class _Counts:
+    def __init__(self, v, l, f):
+        self.vertices, self.loops, self.polygons = range(v), range(l), range(f)
+
+scan = _Counts(*big)                       # 10 million faces, over Tripo's 150 MB
+box = _Box()
+panel._draw_upload_size(box, scan, tripo, settings)
+assert len(box.lines) == 4 and box.lines[0][1] == "ERROR", box.lines
+assert box.lines[2] == ("Recommended upload: 500,000 to 1,000,000 faces", "INFO"), box.lines
+assert box.lines[3][0].startswith("5 to 10 % of the source"), box.lines
+# a limit inside the range caps its upper end to what fits
+cramped = {**tripo, "upload_limit_mb": 15}
+cramped_fit = mesh_io.faces_within_upload_limit(*big, 15 * 1024 * 1024)
+assert 500_000 < cramped_fit < 1_000_000, cramped_fit
+box = _Box()
+panel._draw_upload_size(box, scan, cramped, settings)
+assert box.lines[2][0] == f"Recommended upload: 500,000 to {cramped_fit:,} faces", box.lines
+settings.pre_decimate = True
+settings.pre_decimate_target = 600_000
+box = _Box()
+panel._draw_upload_size(box, scan, tripo, settings)
+assert box.lines[0][1] == "CHECKMARK" and box.lines[0][0].startswith("Recommended"), box.lines
+settings.pre_decimate_target = 200_000
+box = _Box()
+panel._draw_upload_size(box, scan, tripo, settings)
+assert box.lines[0][1] == "INFO", box.lines
+settings.pre_decimate = False
+mid = _Counts(450_000, 2_700_000, 900_000)  # fits the limit, floor makes one number
+box = _Box()
+panel._draw_upload_size(box, mid, tripo, settings)
+assert box.lines[0] == ("Recommended upload: about 100,000 faces", "INFO"), box.lines
+assert box.lines[1][0].startswith("11 % of the source"), box.lines
+print("[TEST] upload recommendation ok")
 
 # Pre-decimate export
 glb2 = os.path.join(tmp, "upload_dec.glb")

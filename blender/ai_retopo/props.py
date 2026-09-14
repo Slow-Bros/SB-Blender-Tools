@@ -90,7 +90,11 @@ class SBAIRetopoSettings(bpy.types.PropertyGroup):
     )
     pre_decimate_target: IntProperty(
         name="Upload Faces",
-        description="Target face count for the pre-decimation",
+        description=(
+            "Target face count for the pre-decimation. The panel recommends a "
+            "range: 5 to 10 % of the source works best for the AI models, "
+            "denser uploads mostly add scan noise"
+        ),
         default=200000,
         min=1000,
         soft_max=2000000,
