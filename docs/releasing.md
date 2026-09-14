@@ -57,9 +57,9 @@ Two consequences follow from that URL:
   fails the check instead of installing.
 - **Every listed zip must actually be present.** Deleting an old zip without
   regenerating the index leaves an entry pointing at a missing file.
-- Old zips may be kept or removed as you like — `index.json` only ever lists the
-  newest version per add-on id. Keeping them costs a few kilobytes and lets a
-  user reinstall an earlier build by hand.
+- **`index.json` lists every zip in the folder**, older versions included, so
+  remove superseded builds before regenerating. Nothing is lost: the git
+  history and the release tag keep every published zip.
 - Adding a second add-on needs no extra work: put its zip in the same folder and
   regenerate, and it appears alongside the existing ones.
 

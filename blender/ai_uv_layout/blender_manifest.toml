@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "ai_uv_layout"
-version = "0.1.0"
+version = "0.1.1"
 name = "AI UV Layout"
 tagline = "AI UV unwrapping via Scenario API, applied to the original mesh"
 maintainer = "Slow Bros. <amalia@slow-bros.com>"

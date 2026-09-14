@@ -7,14 +7,14 @@
       "id": "ai_retopo",
       "name": "AI Retopo",
       "tagline": "AI retopology via Scenario API, placed on the original object",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "type": "add-on",
       "maintainer": "Slow Bros. <amalia@slow-bros.com>",
       "license": [
         "SPDX:GPL-3.0-or-later"
       ],
       "blender_version_min": "4.2.0",
-      "website": "https://github.com/Slow-Bros/SBTools",
+      "website": "https://github.com/Slow-Bros/SB-Blender-Tools",
       "permissions": {
         "network": "Upload mesh to api.cloud.scenario.com, download retopo result",
         "files": "Temporary GLB/OBJ files while exchanging meshes with the API"
@@ -23,16 +23,16 @@
         "Mesh",
         "Object"
       ],
-      "archive_url": "./ai_retopo-0.1.0.zip",
-      "archive_size": 34455,
-      "archive_hash": "sha256:2af0e1af27505ef4b72dc62a451b38f13f255e16055b65136890ec88020aa5fd"
+      "archive_url": "./ai_retopo-0.1.1.zip",
+      "archive_size": 38067,
+      "archive_hash": "sha256:9ad8b148fef130d39b8f3c3d5ead907235a35c612f613ab6d7e8e8b4d5d3c296"
     },
     {
       "schema_version": "1.0.0",
       "id": "ai_uv_layout",
       "name": "AI UV Layout",
       "tagline": "AI UV unwrapping via Scenario API, applied to the original mesh",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "type": "add-on",
       "maintainer": "Slow Bros. <amalia@slow-bros.com>",
       "license": [
@@ -48,9 +48,9 @@
         "Mesh",
         "UV"
       ],
-      "archive_url": "./ai_uv_layout-0.1.0.zip",
-      "archive_size": 31828,
-      "archive_hash": "sha256:32119f7e803186936035847606e12a1bea8ef67c5f7938a2cff6e672d4917e11"
+      "archive_url": "./ai_uv_layout-0.1.1.zip",
+      "archive_size": 32165,
+      "archive_hash": "sha256:1dba90df427f068cdf46b0ad275b7fcada13725cbe980ee2a38717af6c455064"
     }
   ]
 }
