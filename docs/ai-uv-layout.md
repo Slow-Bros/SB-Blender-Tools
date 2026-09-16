@@ -41,9 +41,16 @@ into one tab, so both add-ons appear together without knowing about each other.
 | AI Model | Which unwrapping model runs the job. Currently one, see *Models*. |
 | History | Past jobs of this project, with *Import Again* for a result that was never imported. |
 
-Requirements: Object Mode, active object is a mesh. One job at a time; the
-panel shows a progress bar and a cancel button while running. Progress and
-errors are also printed to the system console with the prefix `[SB-AI-UV]`.
+Requirements: Object Mode, active object is a mesh. Several jobs can run at
+once; the panel shows a progress bar and a cancel button for each job of the
+open file. Progress and errors are also printed to the system console with the
+prefix `[SB-AI-UV]`.
+
+A job keeps running while you work, including across closing the file and
+opening another; the result only ever lands in the file the job was started
+in, otherwise it waits in that project's *History* for *Import Again*. There is
+no time limit on a job. Both work exactly as in
+[ai-retopo.md](ai-retopo.md#usage).
 
 Result: the object gets a new UV map with the model's layout, set active for
 editing and rendering, and is smooth shaded. Nothing else about the object
@@ -94,8 +101,10 @@ disabled and the reason in the panel.
    onto the object (see below), apply smooth shading, delete the imported
    carrier mesh.
 
-The worker thread never touches `bpy`; it communicates via a queue that a modal
-operator drains on a timer.
+The worker thread never touches `bpy`; it communicates via a queue that a
+persistent app timer drains in the main thread, so a job outlives the window
+and the file it was started in; why it is not a modal operator is explained in
+[ai-retopo.md](ai-retopo.md#pipeline).
 
 ## Why OBJ, and why the base mesh
 

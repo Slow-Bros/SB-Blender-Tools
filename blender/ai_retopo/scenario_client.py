@@ -51,13 +51,12 @@ class Cancelled(ScenarioError):
 
 class ScenarioClient:
     def __init__(self, api_key, api_secret, *, cancel_event=None, log=None,
-                 poll_interval=5.0, job_timeout=900.0):
+                 poll_interval=5.0):
         token = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
         self._auth = f"Basic {token}"
         self._cancel = cancel_event or threading.Event()
         self._log = log or (lambda msg: None)
         self.poll_interval = poll_interval
-        self.job_timeout = job_timeout
 
     # -- Basis ----------------------------------------------------------
 
@@ -197,9 +196,15 @@ class ScenarioClient:
         return job_id
 
     def wait_for_job(self, job_id, on_poll=None):
-        deadline = time.monotonic() + self.job_timeout
+        """Wartet, bis der Job fertig ist oder scheitert.
+
+        Ohne Zeitlimit: die Laufzeit haengt von Modell und Mesh ab, und ein
+        Limit hier stoppt nur das Warten, nicht den Job bei Scenario — der
+        Eintrag stuende dann faelschlich auf 'failed'. Der Ausweg ist der
+        Cancel des Anwenders ueber cancel_event.
+        """
         count = 0
-        while time.monotonic() < deadline:
+        while True:
             self._sleep(self.poll_interval)
             count += 1
             res = self._request("GET", f"/v1/jobs/{job_id}")
@@ -216,7 +221,6 @@ class ScenarioClient:
                 if not reason:
                     self._log(f"Job {job_id} {status} without a reason: {json.dumps(job)[:600]}")
                 raise ScenarioError(f"Job failed: {reason or status}")
-        raise ScenarioError(f"Timed out: job did not finish within {self.job_timeout / 60:.0f} minutes")
 
     def download_job_mesh(self, job_result):
         """Laedt das 3D-Ergebnis eines Jobs. Bevorzugt OBJ (Quads), sonst GLB.

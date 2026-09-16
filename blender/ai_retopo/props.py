@@ -22,6 +22,7 @@ class SBAIRetopoHistoryItem(bpy.types.PropertyGroup):
     size_mb: FloatProperty(name="Size (MB)")
     source_object: StringProperty(name="Source Object")
     blend_file: StringProperty(name="Project")
+    error: StringProperty(name="Error")
 
 
 def _sync_history(self, context):
@@ -123,10 +124,9 @@ class SBAIRetopoSettings(bpy.types.PropertyGroup):
         update=_sync_history,
     )
 
-    # Laufzeitstatus, nur zur Anzeige
-    running: BoolProperty(default=False, options={"SKIP_SAVE"})
-    progress: FloatProperty(default=0.0, min=0.0, max=1.0, subtype="FACTOR", options={"SKIP_SAVE"})
-    status: StringProperty(default="", options={"SKIP_SAVE"})
+    # Ergebnis des letzten Imports in diese Datei, nur zur Anzeige. Fortschritt
+    # und Status laufender Jobs liegen am Job selbst (operators._Job), denn ein
+    # Job ueberlebt den Wechsel der Datei, die Szene nicht.
     last_result: StringProperty(default="", options={"SKIP_SAVE"})
     last_warning: StringProperty(default="", options={"SKIP_SAVE"})
     last_error: StringProperty(default="", options={"SKIP_SAVE"})

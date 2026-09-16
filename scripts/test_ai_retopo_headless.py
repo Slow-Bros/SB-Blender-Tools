@@ -6,12 +6,14 @@ Run:  blender -b --python scripts/test_ai_retopo_headless.py
 Covers: registration, pre-upload cleanup, GLB export of a transformed object,
 import of a simulated (normalized) result, the bounding-box safety net with its
 one percent tolerance, stray fragments being ignored during measurement,
-placement on the original, the pure-python API response parsers, and the job
-history with its project handover.
+placement on the original, the pure-python API response parsers, the job
+history with its project handover, and the job pump that delivers a result
+only into the file the job belongs to.
 """
 import os
 import sys
 import tempfile
+import threading
 
 import bmesh
 import bpy
@@ -25,7 +27,8 @@ import addon_utils  # noqa: E402
 bpy.ops.wm.read_factory_settings(use_empty=True)
 mod = addon_utils.enable("ai_retopo", default_set=True, persistent=False)
 assert mod is not None, "add-on failed to enable"
-from ai_retopo import credentials, history, mesh_io, models, panel, preferences, scenario_client  # noqa: E402
+from ai_retopo import (credentials, history, mesh_io, models, operators, panel,  # noqa: E402
+                       preferences, scenario_client)
 
 ctx = bpy.context
 scene = ctx.scene
@@ -767,8 +770,131 @@ except RuntimeError as e:
     assert "API key" in str(e), e
     res = {"CANCELLED"}
 assert res == {"CANCELLED"}, res
-assert not scene.sb_ai_retopo.running
+assert not operators.is_running()
 print("[TEST] operator credential guard ok")
+
+# --- job pump: an app timer drains the worker's events in the main thread, so
+# a job outlives the window and the file it was started in. Simulated with
+# jobs whose thread is a stand-in; the events are put in by hand.
+history.entries(force=True)
+history.new_session()
+
+
+class _FakeThread:
+    def __init__(self, alive=True):
+        self.alive = alive
+
+    def is_alive(self):
+        return self.alive
+
+
+def fake_job(source, job_id=None, alive=True):
+    job = operators._Job(source_name=source, model_label="Tripo Retopology", job_id=job_id)
+    job.temp_dir = tempfile.mkdtemp(prefix="sb_pump_")
+    job.thread = _FakeThread(alive)
+    operators._jobs.append(job)
+    return job
+
+
+def result_copy(job):
+    dst = os.path.join(job.temp_dir, "retopo_result.obj")
+    with open(obj_path, "rb") as fi, open(dst, "wb") as fo:
+        fo.write(fi.read())
+    return dst
+
+
+assert operators._pump() is None, "no jobs, the timer must end"
+settings = scene.sb_ai_retopo
+
+# A job of this (unsaved) file: the id goes into the history with this
+# document's key, the result is imported here.
+job = fake_job("Scan")
+assert job.belongs_to_open_file()
+job.events.put(("job", {"job_id": "pump_1"}))
+job.events.put(("progress", {"value": 0.5, "message": "Retopology running ..."}))
+assert operators._pump() == operators._TICK
+assert job.progress == 0.5 and job.status == "Retopology running ..."
+entry = history.get("pump_1")
+assert entry["status"] == history.STATUS_RUNNING and entry["session"] == history.SESSION, entry
+assert operators.jobs_for_open_file() == [job] and operators.other_jobs_count() == 0
+assert operators.is_fetching("pump_1") and operators.find_job(job.token) is job
+before = set(bpy.data.objects)
+job.events.put(("done", {"path": result_copy(job), "size_mb": 0.5}))
+assert operators._pump() is None
+imported = [o for o in bpy.data.objects if o not in before]
+assert len(imported) == 1 and imported[0].type == "MESH", imported
+assert settings.last_result.startswith(imported[0].name), settings.last_result
+assert history.get("pump_1")["status"] == history.STATUS_FINISHED
+assert history.get("pump_1")["size_mb"] == 0.5
+assert not operators._jobs and not os.path.exists(job.temp_dir)
+
+# A job of another file: finished in the history, nothing imported here.
+job = fake_job("Scan", job_id="pump_2")
+job.blend_file = "C:/projects/other.blend"
+assert not job.belongs_to_open_file()
+history.add("pump_2", name="Scan_retopo", model=job.model_label, source_object="Scan",
+            blend_file=job.blend_file)
+assert operators.jobs_for_open_file() == [] and operators.other_jobs_count() == 1
+settings.last_result = ""
+before = set(bpy.data.objects)
+job.events.put(("done", {"path": result_copy(job), "size_mb": 0.5}))
+assert operators._pump() is None
+assert set(bpy.data.objects) == before, "a result must not land in a foreign project"
+assert settings.last_result == ""
+assert history.get("pump_2")["status"] == history.STATUS_FINISHED
+assert not operators._jobs and not os.path.exists(job.temp_dir)
+
+# A job started in an unsaved file that was then left (File > New): the
+# document key no longer matches, so it counts as another project.
+job = fake_job("Scan", job_id="pump_3")
+history.new_session()
+assert not job.belongs_to_open_file()
+operators._end(job)
+
+# Errors and cancels reach the history, the error text with them; the panel
+# of the job's own file shows the error as well.
+job = fake_job("Scan", job_id="pump_4")
+history.add("pump_4", name="Scan_retopo", model=job.model_label, source_object="Scan",
+            blend_file="")
+job.events.put(("error", {"message": "Job failed: out of credits"}))
+assert operators._pump() is None
+assert history.get("pump_4")["status"] == history.STATUS_FAILED
+assert history.get("pump_4")["error"] == "Job failed: out of credits"
+assert settings.last_error == "Job failed: out of credits"
+history.sync(ctx)
+assert any(i.error == "Job failed: out of credits" for i in ctx.window_manager.sb_ai_retopo_history)
+
+job = fake_job("Scan", job_id="pump_5")
+history.add("pump_5", name="Scan_retopo", model=job.model_label, source_object="Scan",
+            blend_file="")
+job.events.put(("cancelled", {}))
+assert operators._pump() is None
+assert history.get("pump_5")["status"] == history.STATUS_CANCELLED
+
+# A thread that died without a word is reported, not waited for
+job = fake_job("Scan", job_id="pump_6", alive=False)
+assert operators._pump() is None
+assert "stopped unexpectedly" in settings.last_error, settings.last_error
+
+# The cancel operator finds its job by token
+job = fake_job("Scan")
+job.thread = threading.Thread(target=lambda: None)
+job.thread.start()
+assert bpy.ops.sb.ai_retopo_cancel(token=job.token) == {"FINISHED"}
+assert job.cancel.is_set() and job.status == "Cancelling ..."
+operators._end(job)
+
+# Saving the unsaved file for the first time gives its jobs their project,
+# exactly like the history entries get it
+job = fake_job("Scan", job_id="pump_7")
+assert job.blend_file == ""
+saved = os.path.join(tmp, "pump.blend")
+bpy.ops.wm.save_as_mainfile(filepath=saved)
+assert bpy.data.filepath == saved
+assert job.blend_file == saved and job.belongs_to_open_file(), job.blend_file
+operators._end(job)
+assert not operators._jobs
+print("[TEST] job pump ok")
 addon_utils.disable("ai_retopo", default_set=True)
 assert "sb_ai_retopo" not in bpy.types.Scene.bl_rna.properties
 print("[TEST] ALL OK")
