@@ -7,7 +7,7 @@
       "id": "ai_retopo",
       "name": "AI Retopo",
       "tagline": "AI retopology via Scenario API, placed on the original object",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "type": "add-on",
       "maintainer": "Slow Bros. <amalia@slow-bros.com>",
       "license": [
@@ -23,16 +23,16 @@
         "Mesh",
         "Object"
       ],
-      "archive_url": "./ai_retopo-0.1.1.zip",
-      "archive_size": 38067,
-      "archive_hash": "sha256:9ad8b148fef130d39b8f3c3d5ead907235a35c612f613ab6d7e8e8b4d5d3c296"
+      "archive_url": "./ai_retopo-0.1.2.zip",
+      "archive_size": 39853,
+      "archive_hash": "sha256:13a10ddd31eaf0497ca6a05777670fb30de7605dd86b41a1b1f9c3c5263f3e49"
     },
     {
       "schema_version": "1.0.0",
       "id": "ai_uv_layout",
       "name": "AI UV Layout",
       "tagline": "AI UV unwrapping via Scenario API, applied to the original mesh",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "type": "add-on",
       "maintainer": "Slow Bros. <amalia@slow-bros.com>",
       "license": [
@@ -48,9 +48,9 @@
         "Mesh",
         "UV"
       ],
-      "archive_url": "./ai_uv_layout-0.1.1.zip",
-      "archive_size": 32165,
-      "archive_hash": "sha256:1dba90df427f068cdf46b0ad275b7fcada13725cbe980ee2a38717af6c455064"
+      "archive_url": "./ai_uv_layout-0.1.2.zip",
+      "archive_size": 34022,
+      "archive_hash": "sha256:52c06d70280c0a9a380d0ca437a524c54a2ef97ba972a4e4b41d224af546a97f"
     }
   ]
 }
