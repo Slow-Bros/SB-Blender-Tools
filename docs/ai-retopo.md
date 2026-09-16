@@ -46,9 +46,21 @@ below this panel and takes the retopo result on to the next step.
 | History | Past jobs of this project, with *Import Again* for a result that was never imported. See *History* below. |
 | Pre-Decimation | Decimate the upload copy before sending. The original is untouched. The upload limit depends on the model, and the panel recommends a range; see *Upload limit and recommended size* below. |
 
-Requirements: Object Mode, active object is a mesh. One job at a time; the
-panel shows a progress bar and a cancel button while running. Progress and
-errors are also printed to the system console with the prefix `[SB-AI-RETOPO]`.
+Requirements: Object Mode, active object is a mesh. Several jobs can run at
+once; the panel shows a progress bar and a cancel button for each job of the
+open file. Progress and errors are also printed to the system console with the
+prefix `[SB-AI-RETOPO]`.
+
+A job keeps running while you work, and that includes closing the file and
+opening another. The panel then only counts it (*n job(s) running in other
+projects*): its result belongs to the file it was started in and is never
+imported anywhere else. If that file is open when the job finishes, the result
+is imported as usual — once the file is in Object Mode, if it happens to be in
+another mode at the time. If not, the job is marked finished in that project's
+*History*, and *Import Again* fetches it the next time the file is open.
+
+There is no time limit on a job. It runs until Scenario reports a result or a
+failure, or until *Cancel*; see *Cancelling* below for what that does.
 
 Result: a new object `<name>_retopo` in the same collection(s) as the source,
 with the same parent and world matrix, smooth shaded, selected and active.
@@ -175,6 +187,9 @@ If the source object is gone when a job is imported again, the active mesh
 serves as the reference for size and position. Without one the result comes in
 uncorrected, and the panel says so.
 
+A failed job keeps the API's message in its entry, shown under the details, so
+the reason is still there after the job has left the panel.
+
 ## Changing the model list
 
 `blender/ai_retopo/models.json` holds the table above: endpoint id, parameter
@@ -244,8 +259,13 @@ console gets the job object itself, truncated, so the case can be diagnosed.
    and position against the source, apply smooth shading, then assign the
    source's collections, parent and world matrix.
 
-The worker thread never touches `bpy`; it communicates via a queue that a modal
-operator drains on a timer.
+The worker thread never touches `bpy`; it communicates via a queue that an app
+timer (`bpy.app.timers`, persistent) drains in the main thread. The timer is
+deliberately not a modal operator: a modal operator belongs to the window and
+is dropped when another file is opened, so a job's result would arrive with
+nobody to receive it. The app timer survives the file switch and delivers the
+result into the file the job belongs to, or leaves it to *Import Again* when
+that file is not open.
 
 ## Cancelling
 

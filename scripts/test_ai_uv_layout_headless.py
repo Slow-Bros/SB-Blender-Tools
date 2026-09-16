@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 
 import bpy
 import numpy as np
@@ -26,7 +27,8 @@ import addon_utils  # noqa: E402
 bpy.ops.wm.read_factory_settings(use_empty=True)
 assert addon_utils.enable("ai_retopo", default_set=True, persistent=False) is not None, "ai_retopo failed to enable"
 assert addon_utils.enable("ai_uv_layout", default_set=True, persistent=False) is not None, "ai_uv_layout failed to enable"
-from ai_uv_layout import credentials, history, mesh_io, models, panel, preferences, scenario_client  # noqa: E402
+from ai_uv_layout import (credentials, history, mesh_io, models, operators, panel,  # noqa: E402
+                          preferences, scenario_client)
 from ai_retopo import credentials as retopo_credentials  # noqa: E402
 from ai_retopo import panel as retopo_panel  # noqa: E402
 from ai_retopo import preferences as retopo_preferences  # noqa: E402
@@ -508,7 +510,7 @@ except RuntimeError as e:
     assert "API key" in str(e), e
     res = {"CANCELLED"}
 assert res == {"CANCELLED"}, res
-assert not scene.sb_ai_uv.running
+assert not operators.is_running()
 # emptied here, empty there: it is the same store
 assert retopo_preferences.get_credentials(ctx) == ("", "")
 print("[TEST] operator credential guard ok")
@@ -524,11 +526,103 @@ try:
 except RuntimeError as e:
     assert "maximum" in str(e), e
     res = {"CANCELLED"}
-assert res == {"CANCELLED"} and not scene.sb_ai_uv.running
+assert res == {"CANCELLED"} and not operators.is_running()
 assert "maximum" in scene.sb_ai_uv.last_error
 prefs.scenario_api_key = ""
 prefs.scenario_api_secret = ""
 print("[TEST] UV map limit checked before upload")
+
+# --- job pump: an app timer drains the worker's events in the main thread, so
+# a job outlives the window and the file it was started in. Simulated with
+# jobs whose thread is a stand-in; the events are put in by hand. The full
+# set of cases is in the retopo test, the module is the same; here the
+# UV-specific delivery and the project check.
+history.entries(force=True)
+history.new_session()
+
+
+class _FakeThread:
+    def __init__(self, alive=True):
+        self.alive = alive
+
+    def is_alive(self):
+        return self.alive
+
+
+def fake_job(source, job_id=None, alive=True):
+    job = operators._Job(source_name=source, model_label="Hunyuan UV", job_id=job_id)
+    job.temp_dir = tempfile.mkdtemp(prefix="sb_pump_")
+    job.thread = _FakeThread(alive)
+    operators._jobs.append(job)
+    return job
+
+
+def result_copy(job):
+    dst = os.path.join(job.temp_dir, "uv_result.obj")
+    with open(result_path, "rb") as fi, open(dst, "wb") as fo:
+        fo.write(fi.read())
+    return dst
+
+
+assert operators._pump() is None, "no jobs, the timer must end"
+settings = scene.sb_ai_uv
+layers_before = [l.name for l in src.data.uv_layers]
+
+# A job of this (unsaved) file: the id goes into the history with this
+# document's key, the UVs land on the source object.
+job = fake_job("Retopo")
+assert job.belongs_to_open_file()
+job.events.put(("job", {"job_id": "pump_1"}))
+job.events.put(("progress", {"value": 0.5, "message": "UV unwrapping running ..."}))
+assert operators._pump() == operators._TICK
+assert job.progress == 0.5 and job.status == "UV unwrapping running ..."
+entry = history.get("pump_1")
+assert entry["status"] == history.STATUS_RUNNING and entry["session"] == history.SESSION, entry
+assert operators.jobs_for_open_file() == [job] and operators.other_jobs_count() == 0
+job.events.put(("done", {"path": result_copy(job), "size_mb": 0.5}))
+assert operators._pump() is None
+assert len(src.data.uv_layers) == len(layers_before) + 1, [l.name for l in src.data.uv_layers]
+assert settings.last_result.startswith("Retopo: new UV map"), settings.last_result
+assert history.get("pump_1")["status"] == history.STATUS_FINISHED
+assert not operators._jobs and not os.path.exists(job.temp_dir)
+
+# A job of another file: finished in the history, nothing transferred here.
+job = fake_job("Retopo", job_id="pump_2")
+job.blend_file = "C:/projects/other.blend"
+assert not job.belongs_to_open_file()
+history.add("pump_2", name="Retopo_uv", model=job.model_label, source_object="Retopo",
+            blend_file=job.blend_file)
+assert operators.jobs_for_open_file() == [] and operators.other_jobs_count() == 1
+settings.last_result = ""
+layers_before = [l.name for l in src.data.uv_layers]
+before = set(bpy.data.objects)
+job.events.put(("done", {"path": result_copy(job), "size_mb": 0.5}))
+assert operators._pump() is None
+assert [l.name for l in src.data.uv_layers] == layers_before, "UVs must not land in a foreign project"
+assert set(bpy.data.objects) == before
+assert settings.last_result == ""
+assert history.get("pump_2")["status"] == history.STATUS_FINISHED
+assert not operators._jobs and not os.path.exists(job.temp_dir)
+
+# Errors reach the history with their text and the panel of the job's file
+job = fake_job("Retopo", job_id="pump_3")
+history.add("pump_3", name="Retopo_uv", model=job.model_label, source_object="Retopo",
+            blend_file="")
+job.events.put(("error", {"message": "Job failed: out of credits"}))
+assert operators._pump() is None
+assert history.get("pump_3")["status"] == history.STATUS_FAILED
+assert history.get("pump_3")["error"] == "Job failed: out of credits"
+assert settings.last_error == "Job failed: out of credits"
+
+# The cancel operator finds its job by token
+job = fake_job("Retopo")
+job.thread = threading.Thread(target=lambda: None)
+job.thread.start()
+assert bpy.ops.sb.ai_uv_layout_cancel(token=job.token) == {"FINISHED"}
+assert job.cancel.is_set() and job.status == "Cancelling ..."
+operators._end(job)
+assert not operators._jobs
+print("[TEST] job pump ok")
 
 addon_utils.disable("ai_uv_layout", default_set=True)
 assert "sb_ai_uv" not in bpy.types.Scene.bl_rna.properties

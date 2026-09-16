@@ -37,13 +37,6 @@ class SBAIRetopoPreferences(bpy.types.AddonPreferences):
         min=1,
         max=60,
     )
-    job_timeout_minutes: IntProperty(
-        name="Job Timeout (min)",
-        description="How long to wait for a retopology job before giving up",
-        default=15,
-        min=1,
-        max=120,
-    )
 
     def draw(self, context):
         layout = self.layout
@@ -52,9 +45,7 @@ class SBAIRetopoPreferences(bpy.types.AddonPreferences):
 
         box = layout.box()
         box.label(text="Connection", icon="TIME")
-        row = box.row(align=True)
-        row.prop(self, "poll_interval")
-        row.prop(self, "job_timeout_minutes")
+        box.prop(self, "poll_interval")
 
 
 def get_prefs(context=None) -> SBAIRetopoPreferences:

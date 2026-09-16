@@ -10,8 +10,7 @@ import textwrap
 
 import bpy
 
-from . import history, mesh_io, models, preferences
-from .operators import is_running
+from . import history, mesh_io, models, operators, preferences
 
 STATUS_ICONS = {
     history.STATUS_RUNNING: "SORTTIME",
@@ -47,7 +46,6 @@ class VIEW3D_PT_sb_ai_uv_layout(bpy.types.Panel):
         layout = self.layout
         settings = context.scene.sb_ai_uv
         obj = context.active_object
-        running = is_running()
 
         if models.LOAD_ERROR:
             box = layout.box()
@@ -80,18 +78,26 @@ class VIEW3D_PT_sb_ai_uv_layout(bpy.types.Panel):
 
         # -- Settings -----------------------------------------------------
         col = layout.column(align=True)
-        col.enabled = not running
         col.label(text="AI Model")
         col.prop(settings, "model", text="")
 
         layout.separator()
 
         # -- Action and status --------------------------------------------
-        if running:
-            layout.progress(text=settings.status or "Running ...", factor=settings.progress, type="BAR")
-            layout.operator("sb.ai_uv_layout_cancel", icon="CANCEL")
-        else:
-            layout.operator("sb.ai_uv_layout", icon="UV", text="Generate UV Layout")
+        layout.operator("sb.ai_uv_layout", icon="UV", text="Generate UV Layout")
+
+        # Ein Balken je Job dieser Datei. Jobs anderer Dateien laufen im
+        # Hintergrund weiter und werden nur gezaehlt: ihr Ergebnis gehoert
+        # nicht hierher.
+        for job in operators.jobs_for_open_file():
+            col = layout.column(align=True)
+            col.label(text=f"{job.source_name} ({job.model_label})", icon="MESH_DATA")
+            row = col.row(align=True)
+            row.progress(text=job.status or "Running ...", factor=job.progress, type="BAR")
+            row.operator("sb.ai_uv_layout_cancel", text="", icon="CANCEL").token = job.token
+        others = operators.other_jobs_count()
+        if others:
+            layout.label(text=f"{others} job(s) running in other projects", icon="TIME")
 
         if settings.last_result:
             layout.label(text=settings.last_result, icon="CHECKMARK")
@@ -159,9 +165,12 @@ class VIEW3D_PT_sb_ai_uv_history(bpy.types.Panel):
         box.label(text=item.job_id, icon="COPY_ID")
         if not item.blend_file:
             box.label(text="No project, the file was never saved", icon="INFO")
+        if item.error:
+            for i, line in enumerate(textwrap.wrap(item.error, 42)):
+                box.label(text=line, icon="BLANK1")
 
         col = layout.column()
-        col.enabled = not is_running()
+        col.enabled = not operators.is_fetching(item.job_id)
         col.operator("sb.ai_uv_layout_history_import", icon="IMPORT")
 
 

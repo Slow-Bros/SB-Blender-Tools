@@ -135,8 +135,15 @@ def _write(data):
     return data
 
 
-def add(job_id, *, name, model, source_object, blend_file):
-    """Legt den Eintrag an, sobald die Job-Id bekannt ist."""
+def add(job_id, *, name, model, source_object, blend_file, session=None):
+    """Legt den Eintrag an, sobald die Job-Id bekannt ist.
+
+    'session' ist die Kennung des Dokuments, in dem der Job gestartet wurde.
+    Sie kommt vom Job mit, weil bis zur Job-Id eine andere Datei geoeffnet
+    worden sein kann; ohne Angabe gilt das aktuelle Dokument.
+    """
+    if session is None:
+        session = SESSION
     entry = {
         "job_id": job_id,
         "name": name,
@@ -147,7 +154,10 @@ def add(job_id, *, name, model, source_object, blend_file):
         "source_object": source_object,
         "blend_file": blend_file,
         # Nur solange der Eintrag noch kein Projekt hat
-        "session": "" if blend_file else SESSION,
+        "session": "" if blend_file else session,
+        # Fehlermeldung eines gescheiterten Jobs; das Panel zeigt sie im
+        # Eintrag, weil der Job laengst aus der Anzeige verschwunden sein kann
+        "error": "",
     }
     data = [e for e in entries(force=True) if e.get("job_id") != job_id]
     data.insert(0, entry)
@@ -226,6 +236,7 @@ def sync(context=None):
         item.size_mb = float(entry.get("size_mb") or 0.0)
         item.source_object = entry.get("source_object", "")
         item.blend_file = entry.get("blend_file", "")
+        item.error = entry.get("error", "")
     wm.sb_ai_retopo_history_index = min(
         wm.sb_ai_retopo_history_index, max(0, len(wm.sb_ai_retopo_history) - 1)
     )
