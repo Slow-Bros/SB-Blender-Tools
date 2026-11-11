@@ -25,7 +25,7 @@ Both add-ons share the sidebar tab *SBTools* in the 3D viewport and one set of
 Scenario API credentials, entered once in either add-on's preferences.
 
 - **AI Retopo** (`blender/ai_retopo`) — sends the active mesh to a retopology
-  model on the Scenario API (Hunyuan PolyGen, Meshy Remesh or Tripo), imports
+  model on the Scenario API (Hunyuan PolyGen, Meshy Remesh or Tripo v2/v3), imports
   the result as a new object at the original's position.
   Setup and details: [docs/ai-retopo.md](docs/ai-retopo.md).
 - **AI UV Layout** (`blender/ai_uv_layout`) — sends the active mesh to the

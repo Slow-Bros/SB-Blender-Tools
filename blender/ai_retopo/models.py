@@ -5,7 +5,7 @@ Die Tabelle steht in models.json neben diesem Modul, damit ein Modell ohne
 Code-Aenderung ergaenzt oder korrigiert werden kann.
 
 Jedes Modell hat eigene Parameternamen und eine eigene Art, die Polygondichte
-zu steuern. Zwei Modelle nehmen eine echte Zielzahl entgegen, eines kennt nur
+zu steuern. Die meisten nehmen eine echte Zielzahl entgegen, Hunyuan kennt nur
 drei Stufen. Das Panel richtet sich nach `density` des gewaehlten Modells.
 
 Quelle: docs.scenario.com, Endpunkt /v1/generate/custom/{model_id}.

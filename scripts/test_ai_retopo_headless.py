@@ -141,6 +141,18 @@ try:
     raise AssertionError("unknown polygon key must raise")
 except ValueError:
     pass
+# Tripo Retopology v3 (October 2026) has the parameters of v2 under its own
+# model id, plus an optional smartUv that stays off: UVs come from AI UV Layout.
+tripo_v3 = models.get("tripo_retopology_v3")
+assert tripo_v3["key"] == "tripo_retopology_v3", "v3 must be in the registry"
+assert tripo_v3["id"] == "model_tripo-retopology-v3", tripo_v3
+assert models.count_range(tripo_v3, models.QUADS) == (500, 10000), tripo_v3["count_range"]
+assert models.count_range(tripo_v3, models.TRIS) == (500, 20000), tripo_v3["count_range"]
+assert models.upload_limit_bytes(tripo_v3) == 150 * 1024 * 1024
+body = models.build_request(tripo_v3, "asset_x", models.QUADS, target_faces=20000)
+assert body == {"model": "asset_x", "quad": True, "faceLimit": 10000, "bake": False}, body
+body = models.build_request(tripo_v3, "asset_x", models.TRIS, target_faces=100)
+assert body == {"model": "asset_x", "quad": False, "faceLimit": 500, "bake": False}, body
 # Upload limits are per model, straight from each model's documentation:
 # Tripo takes 150 MB, Hunyuan 200 MB. Meshy documents none and gets the default.
 assert models.upload_limit_bytes(tripo) == 150 * 1024 * 1024
