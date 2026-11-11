@@ -101,7 +101,7 @@ def find_job(token):
 # -- Worker (Thread, kein bpy) ------------------------------------------------
 
 def _worker(job, api_key, api_secret, glb_path, model_spec, polygon_key, face_level,
-            target_faces, poll_interval):
+            target_faces, smart_uv, poll_interval):
     """Laeuft im Thread. Kommuniziert nur ueber job.events, kein bpy."""
     def emit(kind, **data):
         job.events.put((kind, data))
@@ -125,7 +125,8 @@ def _worker(job, api_key, api_secret, glb_path, model_spec, polygon_key, face_le
 
         emit("progress", value=0.22, message=f"Starting job ({model_spec['label']}) ...")
         body = models.build_request(model_spec, asset_id, polygon_key,
-                                    face_level=face_level, target_faces=target_faces)
+                                    face_level=face_level, target_faces=target_faces,
+                                    smart_uv=smart_uv)
         job_id = client.start_generation(model_spec["id"], body)
         log(f"Job: {job_id}")
         # Sofort melden: der Hauptthread schreibt die Id in die Historie, und
@@ -341,6 +342,9 @@ def _import(context, job):
     summary = f"{obj.name}: {stats['faces']} faces, {stats['quads']} quads, {stats['tris']} tris"
     if stats["ngons"]:
         summary += f", {stats['ngons']} n-gons"
+    # Zeigt, ob die UVs eines Modells mit smartUv angekommen sind
+    if obj.data.uv_layers:
+        summary += f", UV map '{obj.data.uv_layers[0].name}'"
     settings.last_result = summary
     log(summary)
 
@@ -474,6 +478,9 @@ class SB_OT_ai_retopo(bpy.types.Operator):
                 density += f" (clamped from {wanted} to the model range)"
         else:
             density = f"level {settings.face_level}"
+        smart_uv = settings.smart_uv and models.supports_uv(spec)
+        if smart_uv:
+            density += ", UVs unwrapped by the model"
 
         log(
             f"Export: {info['faces']} faces raw, {info['faces_clean']} after cleanup, "
@@ -488,7 +495,7 @@ class SB_OT_ai_retopo(bpy.types.Operator):
             job, _worker,
             (job, api_key, api_secret, glb_path, spec,
              settings.polygon_type, settings.face_level, settings.target_faces,
-             float(prefs.poll_interval)),
+             smart_uv, float(prefs.poll_interval)),
             "sb_ai_retopo",
         )
         return {"FINISHED"}

@@ -80,6 +80,15 @@ class SBAIRetopoSettings(bpy.types.PropertyGroup):
         ),
         default=models.QUADS,
     )
+    smart_uv: BoolProperty(
+        name="Unwrap UVs",
+        description=(
+            "Let the model unwrap UVs in the same job, at no extra cost. Only "
+            "for models that offer it (Tripo Retopology v3). AI UV Layout can "
+            "still add its own UV map afterwards"
+        ),
+        default=False,
+    )
     pre_decimate: BoolProperty(
         name="Pre-Decimation",
         description=(
