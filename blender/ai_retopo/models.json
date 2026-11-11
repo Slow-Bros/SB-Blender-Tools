@@ -16,7 +16,11 @@
     "",
     "upload_limit_mb is the largest file the model accepts, as its",
     "documentation states it. A model without one gets the default in",
-    "models.py; Meshy documents no limit."
+    "models.py; Meshy documents no limit.",
+    "",
+    "uv_param names the switch of a model that can unwrap UVs in the same",
+    "job. Only models that have it show the Unwrap UVs option, and only",
+    "they get the parameter, set to the option's value."
   ],
   "version": 1,
   "models": [
@@ -72,6 +76,7 @@
       "count_param": "faceLimit",
       "count_range": {"quads": [500, 10000], "tris": [500, 20000]},
       "upload_limit_mb": 150,
+      "uv_param": "smartUv",
       "extra": {
         "bake": false
       }

@@ -132,6 +132,10 @@ class VIEW3D_PT_sb_ai_retopo(bpy.types.Panel):
         col.label(text="Polygons")
         col.prop(settings, "polygon_type", expand=True)
         col.separator()
+        # Nur bei Modellen, die das koennen; die anderen bekommen den
+        # Parameter gar nicht erst
+        if models.supports_uv(spec):
+            col.prop(settings, "smart_uv")
         col.prop(settings, "remove_fragments")
         col.prop(settings, "hide_source")
 

@@ -41,6 +41,7 @@ below this panel and takes the retopo result on to the next step.
 | AI Model | Which retopology model runs the job. See *Models* below. |
 | Target Polygons | A face count for models that accept one, otherwise Low / Medium / High. The panel shows the selected model's allowed range. |
 | Polygons | Quads / Triangles, mapped to whatever the selected model calls it. |
+| Unwrap UVs | Let the model unwrap UVs in the same job. Only shown for models that can (Tripo Retopology v3), off by default. See *Tripo v3 and v2* below. |
 | Remove Stray Fragments | Delete separate parts the model placed outside the object. On by default. See *Stray fragments* below. |
 | Hide Original | Hide (not delete) the source object after a successful import. |
 | History | Past jobs of this project, with *Import Again* for a result that was never imported. See *History* below. |
@@ -107,10 +108,13 @@ is Tripo's limit for all retopology versions. v2 stays in the registry as
 *Tripo Retopology v2* so earlier results can be compared and saved scenes
 keep their choice; its key is unchanged.
 
-v3 can also unwrap UVs in the same job (`smartUv`, no extra cost). The add-on
-leaves that off, because UVs come from [AI UV Layout](ai-uv-layout.md) as the
-next step, and switching it on would add a control whose result has not been
-compared with that step yet.
+v3 can also unwrap UVs in the same job (`smartUv`, no extra cost). The panel
+offers that as *Unwrap UVs* while v3 is selected, off by default, and sends
+`smartUv` only to v3: the other models do not know the parameter, and Tripo's
+own API rejects it for v2 with a 400. The result then arrives with its UV map, and
+the panel's result line names it. [AI UV Layout](ai-uv-layout.md) still works
+on such a result and adds its own numbered map next to it, so the two layouts
+can be compared on the same object.
 
 *Tripo P1* (and the newer P2) is not a retopology model, although Tripo
 advertises it as "Smart Mesh" with clean low-poly topology. It generates a
@@ -222,7 +226,9 @@ model, correcting a range or dropping one that is gone means editing that file
 and restarting Blender, not editing Python. A count model's `count_range` is
 either one `[min, max]` pair for both polygon types or an object with a pair
 per type, `{"quads": [500, 10000], "tris": [500, 20000]}`. `upload_limit_mb`
-is optional and defaults to 200.
+is optional and defaults to 200. `uv_param` is optional too: it names the
+parameter of a model that can unwrap UVs in the same job (`smartUv` for
+Tripo v3), and only a model that has it shows the *Unwrap UVs* option.
 
 There is deliberately no interface around this. An earlier version had buttons
 to refresh a catalogue from the API, check single model ids, export the list for

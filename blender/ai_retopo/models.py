@@ -107,6 +107,10 @@ def _validate(entry):
     if isinstance(limit, bool) or not isinstance(limit, (int, float)) or limit <= 0:
         raise ValueError(f"'{entry['key']}' upload_limit_mb is not a positive number")
 
+    uv_param = entry.setdefault("uv_param", "")
+    if not isinstance(uv_param, str):
+        raise ValueError(f"'{entry['key']}' uv_param is not a parameter name")
+
     entry.setdefault("description", entry["label"])
     entry.setdefault("extra", {})
     return entry
@@ -209,17 +213,25 @@ def count_range_label(spec, polygon_key):
     return f"{bounds[0]:,} to {bounds[1]:,}"
 
 
+def supports_uv(spec):
+    """Kann das Modell im selben Job UVs abwickeln (Tripo v3: smartUv)?"""
+    return bool(spec.get("uv_param"))
+
+
 def upload_limit_bytes(spec):
     """Groesste Datei, die dieses Modell annimmt."""
     return int(spec["upload_limit_mb"] * 1024 * 1024)
 
 
-def build_request(spec, asset_id, polygon_key, *, face_level=None, target_faces=None):
+def build_request(spec, asset_id, polygon_key, *, face_level=None, target_faces=None,
+                  smart_uv=False):
     """Baut den Request-Body fuer /v1/generate/custom/{id}.
 
     polygon_key ist QUADS oder TRIS und wird auf den Wert des jeweiligen
     Modells abgebildet. Je nach Modell wird entweder face_level oder
     target_faces verwendet; ein count-Modell braucht target_faces.
+    smart_uv geht nur an Modelle mit uv_param; die anderen kennen den
+    Parameter nicht, Tripos eigene API lehnt ihn fuer v2 mit 400 ab.
     """
     if polygon_key not in (QUADS, TRIS):
         raise ValueError(f"unknown topology key: {polygon_key}")
@@ -231,6 +243,9 @@ def build_request(spec, asset_id, polygon_key, *, face_level=None, target_faces=
         body[spec["count_param"]] = clamp_count(spec, target_faces, polygon_key)
     else:
         body[spec["level_param"]] = face_level or "medium"
+
+    if supports_uv(spec):
+        body[spec["uv_param"]] = bool(smart_uv)
 
     body.update(spec.get("extra", {}))
     return body
