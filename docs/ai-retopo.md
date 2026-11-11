@@ -67,14 +67,15 @@ with the same parent and world matrix, smooth shaded, selected and active.
 
 ## Models
 
-Three Scenario models are in the registry. They differ in how the polygon density
+Four Scenario models are in the registry. They differ in how the polygon density
 is controlled, which is why the panel changes with the selected model.
 
 | Model | Model id | Density control | Topology | Upload limit | Result format |
 | --- | --- | --- | --- | --- | --- |
 | Hunyuan PolyGen 1.5 | `model_tencent-smarttopology` | `faceLevel`: low / medium / high only | `polygonType`: `quadrilateral` / `triangle` | 200 MB | OBJ |
 | Meshy Remesh | `model_meshy-remesh` | `targetPolycount`: 100 to 300000 | `topology`: `quad` / `triangle` | none documented, 200 MB assumed | untested |
-| Tripo Retopology | `model_tripo-retopology` | `faceLimit`: 500 to 20000 for triangles, 500 to 10000 for quads | `quad`: boolean | 150 MB | FBX |
+| Tripo Retopology v3 | `model_tripo-retopology-v3` | `faceLimit`: 500 to 20000 for triangles, 500 to 10000 for quads | `quad`: boolean | 150 MB | FBX for quads, GLB for triangles |
+| Tripo Retopology v2 | `model_tripo-retopology` | `faceLimit`: 500 to 20000 for triangles, 500 to 10000 for quads | `quad`: boolean | 150 MB | FBX |
 
 A target face count is approximate. It is what the model aims for, not a
 guarantee, so the result can land somewhat above or below. Values outside the
@@ -94,9 +95,32 @@ depends on the level and on the input mesh. Pick Tripo when a specific number
 matters. Tripo is called with `bake: false` because the upload carries no
 textures, so baking would have nothing to project.
 
+### Tripo v3 and v2
+
+Tripo Retopology v3 is Tripo's newest retopology algorithm, released in
+October 2026 (`model=v3.0` on Tripo's own `/v3/mesh/decimate`). Scenario
+offers it as a separate model and recommends it for new work; in Scenario's
+own comparison it lands about one percent above the target face count on
+average, where v2 overshot by about half. The parameters are those of v2 under
+the new model id, with the same ranges and the same 150 MB upload limit, which
+is Tripo's limit for all retopology versions. v2 stays in the registry as
+*Tripo Retopology v2* so earlier results can be compared and saved scenes
+keep their choice; its key is unchanged.
+
+v3 can also unwrap UVs in the same job (`smartUv`, no extra cost). The add-on
+leaves that off, because UVs come from [AI UV Layout](ai-uv-layout.md) as the
+next step, and switching it on would add a control whose result has not been
+compared with that step yet.
+
+*Tripo P1* (and the newer P2) is not a retopology model, although Tripo
+advertises it as "Smart Mesh" with clean low-poly topology. It generates a
+new mesh from an image or text and takes no mesh as input, so it cannot
+retopologise an existing object and has no place in this registry.
+
 ### Upload limit and recommended size
 
-Each model states its own maximum for the uploaded file: Tripo takes 150 MB,
+Each model states its own maximum for the uploaded file: Tripo takes 150 MB
+(v2 and v3),
 Hunyuan 200 MB, Meshy documents none and gets the 200 MB default. The limits
 are in the registry as `upload_limit_mb`, and the client refuses a larger
 file before any request goes out. Tripo documents no limit on the input face
@@ -138,8 +162,8 @@ point positions and normals degrades the result. Decimating first acts as a
 low-pass filter. Hunyuan PolyGen works the same way but has published
 nothing on input density, and Meshy Remesh is a classic remesher whose
 recommendation is simply to stay under about 300,000 polygons. The range is
-therefore a rule of thumb from one model's guidance, applied to all three
-because it is at worst harmless for the other two. The fraction and the
+therefore a rule of thumb from one model's guidance, applied to all of them
+because it is at worst harmless for the others. The fraction and the
 floor are constants in `mesh_io.py` (`UPLOAD_RECOMMENDED_FRACTION`,
 `UPLOAD_RECOMMENDED_FLOOR`).
 
@@ -283,7 +307,7 @@ September 2026 against a running Hunyuan job, the API answered:
 400 {"reason": "Cannot cancel this type of job. Action not permitted."}
 ```
 
-All three models go through `/v1/generate/custom/{id}`, so this is not specific
+All models go through `/v1/generate/custom/{id}`, so this is not specific
 to Hunyuan. The wording of both the docs and the error suggests the job type may
 be allowed later. If it is, sending that one request from the cancel path is the
 whole change — worth retesting before building anything larger around it.
